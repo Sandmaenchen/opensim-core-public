@@ -34,6 +34,9 @@
 #include "AnalyzeTool.h"
 #include "InverseKinematicsTool.h"
 #include "IMUInverseKinematicsTool.h"
+#include "UKFIMUInverseKinematicsTool.h"
+#include "IMUForwardKinematicsTool.h"
+#include "CoordinateDerivativeTool.h"
 
 #include "InverseDynamicsTool.h"
 
@@ -102,6 +105,9 @@ OSIMTOOLS_API void RegisterTypes_osimTools()
     Object::registerType( OrientationWeightSet());
     Object::registerType( InverseKinematicsTool() );
     Object::registerType( IMUInverseKinematicsTool());
+    Object::registerType( UKFIMUInverseKinematicsTool());
+    Object::registerType( IMUForwardKinematicsTool());
+    Object::registerType( CoordinateDerivativeTool());
     Object::registerType( InverseDynamicsTool() );
     // Old versions
     Object::RenameType("rdCMC_Joint",   "CMC_Joint");
