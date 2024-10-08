@@ -279,6 +279,9 @@ void OpenSim::UKFIMUInverseKinematicsTool::runInverseKinematicsWithOrientationsF
     }
     nuf = nqf;
     log_info("{} coordinates will be used in UKF", nqf);
+	log_info("Eigen world version is {}", EIGEN_WORLD_VERSION);
+    log_info("Eigen major version is {}", EIGEN_MAJOR_VERSION);
+    log_info("Eigen minor verison is {}", EIGEN_MINOR_VERSION);
 
     int ie = 0;
     for (std::map<int, int>::iterator it = simbodyIndexTypeMap.begin(); it != simbodyIndexTypeMap.end(); ++it) {

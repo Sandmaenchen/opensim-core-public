@@ -114,6 +114,9 @@ public:
         first to obtain the first solution and use track() to efficiently
         find a nearby solution due to a small change in the desired value.*/
     virtual void track(SimTK::State &s);
+	
+	 /** Addition from the Kalman Smoother code of Antoine Falisse. */
+    virtual void setState(SimTK::State &s);
 
     /** Read access to the underlying SimTK::Assembler. */
     const SimTK::Assembler& getAssembler() const;

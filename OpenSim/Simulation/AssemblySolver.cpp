@@ -286,6 +286,31 @@ void AssemblySolver::track(SimTK::State &s)
     }
 }
 
+// Addition from the Kalman Smoother code of Antoine Falisse
+void AssemblySolver::setState(SimTK::State &s)
+{
+
+	// move the target locations or angles, etc... just do not change number of goals
+	// and their type (constrained vs. weighted)
+
+	if(_assembler && _assembler->isInitialized()){
+		updateGoals(s);
+	}
+    else{
+		throw Exception("AssemblySolver::setState() failed: assemble() must be called first.");
+	}
+
+	try{
+		// update the state from the result of the assembler
+		_assembler->initialize(s);
+	}
+	catch (const std::exception& ex)
+    {
+		std::cout << "AssemblySolver::setState() attempt Failed: " << ex.what() << std::endl;
+		throw Exception("AssemblySolver::setState() attempt failed.");
+    }
+}
+
 const SimTK::Assembler& AssemblySolver::getAssembler() const
 {
     OPENSIM_THROW_IF(!_assembler, Exception,

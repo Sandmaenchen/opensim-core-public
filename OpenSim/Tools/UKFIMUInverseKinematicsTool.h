@@ -56,9 +56,9 @@
 //#include <Eigen/Eigen>
 //#include <Eigen/Eigenvalues>
 //#include <Eigen/Cholesky>
-#include "eigen/Eigen/Eigen"
-#include "eigen/Eigen/Eigenvalues"
-#include "eigen/Eigen/Cholesky"
+#include "Eigen/Eigen"
+#include "Eigen/Eigenvalues"
+#include "Eigen/Cholesky"
 #include <thread>
 #include <mutex>
 #include <iostream>

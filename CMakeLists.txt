@@ -713,6 +713,8 @@ endif()
 find_package(spdlog REQUIRED
         HINTS "${OPENSIM_DEPENDENCIES_DIR}/spdlog")
 
+find_package(Eigen3 REQUIRED
+        HINTS "${OPENSIM_DEPENDENCIES_DIR}/eigen")
 
 if(NOT SIMBODY_HOME AND OPENSIM_DEPENDENCIES_DIR)
     set(SIMBODY_HOME "${OPENSIM_DEPENDENCIES_DIR}/simbody")
