@@ -187,7 +187,7 @@ echo
 echo "LOG: BUILDING OPENSIM-CORE DEPENDENCIES..."
 mkdir -p ~/opensim-workspace/opensim-core-dependencies-build || true
 cd ~/opensim-workspace/opensim-core-dependencies-build
-cmake ~/opensim-workspace/opensim-core-source/dependencies -DCMAKE_INSTALL_PREFIX=~/opensim-workspace/opensim-core-dependencies-install/ -DSUPERBUILD_ezc3d=on -DOPENSIM_WITH_CASADI=$MOCO -DOPENSIM_WITH_TROPTER=$MOCO
+cmake ~/opensim-workspace/opensim-core-source/dependencies -DCMAKE_CXX_FLAGS="-march=native -mtune=native ${CMAKE_CXX_FLAGS}" -DCMAKE_INSTALL_PREFIX=~/opensim-workspace/opensim-core-dependencies-install/ -DSUPERBUILD_ezc3d=on -DOPENSIM_WITH_CASADI=$MOCO -DOPENSIM_WITH_TROPTER=$MOCO
 cmake . -LAH
 cmake --build . --config $DEBUG_TYPE -j$NUM_JOBS
 echo
@@ -196,7 +196,7 @@ echo
 echo "LOG: BUILDING OPENSIM-CORE..."
 mkdir -p ~/opensim-workspace/opensim-core-build || true
 cd ~/opensim-workspace/opensim-core-build
-cmake ~/opensim-workspace/opensim-core-source -G"$GENERATOR" -DOPENSIM_DEPENDENCIES_DIR=~/opensim-workspace/opensim-core-dependencies-install/ -DBUILD_JAVA_WRAPPING=off -DBUILD_PYTHON_WRAPPING=on -DOPENSIM_C3D_PARSER=ezc3d -DBUILD_TESTING=off -DCMAKE_INSTALL_PREFIX=~/opensim-core -DOPENSIM_INSTALL_UNIX_FHS=off -DSWIG_DIR=~/swig/share/swig -DSWIG_EXECUTABLE=~/swig/bin/swig
+cmake ~/opensim-workspace/opensim-core-source -G"$GENERATOR" -DCMAKE_CXX_FLAGS="-march=native -mtune=native ${CMAKE_CXX_FLAGS}" -DOPENSIM_DEPENDENCIES_DIR=~/opensim-workspace/opensim-core-dependencies-install/ -DBUILD_JAVA_WRAPPING=off -DBUILD_PYTHON_WRAPPING=on -DOPENSIM_C3D_PARSER=ezc3d -DBUILD_TESTING=off -DCMAKE_INSTALL_PREFIX=~/opensim-core -DOPENSIM_INSTALL_UNIX_FHS=off -DSWIG_DIR=~/swig/share/swig -DSWIG_EXECUTABLE=~/swig/bin/swig
 cmake . -LAH
 cmake --build . --config $DEBUG_TYPE -j$NUM_JOBS
 echo
