@@ -948,7 +948,7 @@ void OpenSim::UKFIMUInverseKinematicsTool::UKFTool(int nqf, int nuf, std::map<in
                             arr_ss[ithr]->updU() = (*(arr_u[ithr]));
                         }
                         solvers[ithr]->setState(*(arr_ss[ithr])); //method added to AssemblySolver (like in Kalman Smoother)
-                        //models[ithr]->getMultibodySystem().realize(*(arr_ss[ithr]), SimTK::Stage::Velocity);
+                        models[ithr]->getMultibodySystem().realize(*(arr_ss[ithr]), SimTK::Stage::Velocity);
                         //model.getMultibodySystem().realize(ss, SimTK::Stage::Velocity);
                         solvers[ithr]->computeCurrentSensorOrientations(*(arr_osensorOrientations[ithr]));
                         //ikSolver.computeCurrentSensorOrientations(osensorOrientations);                        
