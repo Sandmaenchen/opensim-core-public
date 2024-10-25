@@ -95,9 +95,8 @@ void OpenSim::UKFIMUInverseKinematicsTool::constructProperties()
     OpenSim::UKFIMUInverseKinematicsTool::constructProperty_sensor_to_opensim_rotations(
             SimTK::Vec3(0));
     OpenSim::UKFIMUInverseKinematicsTool::constructProperty_orientations_file("");
-    OpenSim::OrientationWeightSet orientationWeights;
-    OpenSim::UKFIMUInverseKinematicsTool::constructProperty_orientation_weights(
-            orientationWeights);
+    OpenSim::OrientationWeightSet orientationWeights = OpenSim::OrientationWeightSet();
+    OpenSim::UKFIMUInverseKinematicsTool::constructProperty_orientation_weights(orientationWeights);
     OpenSim::UKFIMUInverseKinematicsTool::constructProperty_alpha(1.0);
     OpenSim::UKFIMUInverseKinematicsTool::constructProperty_beta(2.0);
     OpenSim::UKFIMUInverseKinematicsTool::constructProperty_kappa(-1.337);
@@ -214,6 +213,20 @@ void OpenSim::UKFIMUInverseKinematicsTool::runInverseKinematicsWithOrientationsF
                 "name", "OrientationErrors");
         ikSolver.computeCurrentOrientationErrors(orientationErrors);
     }
+    //if (visualizeResults) {
+    //    model.getVisualizer().show(s0);
+    //    model.getVisualizer().getSimbodyVisualizer().setShowSimTime(true);
+    //}
+
+    // Solve the states with Unscented Kalman Filter
+	//int step = 0;	
+	
+	log_info("Managed to get to UKFTool.");
+
+    // Eigen::MatrixXd meanVec;
+    // Eigen::MatrixXd priorCovMatrix;
+    // Eigen::MatrixXd stateCrossCovMatrix;
+    // std::vector<Eigen::MatrixXd> backwardsPassElement;
 
     std::mutex* fwdBwdMutex = new std::mutex();
     std::condition_variable* condVar = new std::condition_variable();
@@ -279,7 +292,8 @@ void OpenSim::UKFIMUInverseKinematicsTool::runInverseKinematicsWithOrientationsF
     }
     nuf = nqf;
     log_info("{} coordinates will be used in UKF", nqf);
-	log_info("Eigen world version is {}", EIGEN_WORLD_VERSION);
+
+    log_info("Eigen world version is {}", EIGEN_WORLD_VERSION);
     log_info("Eigen major version is {}", EIGEN_MAJOR_VERSION);
     log_info("Eigen minor verison is {}", EIGEN_MINOR_VERSION);
 
@@ -294,13 +308,25 @@ void OpenSim::UKFIMUInverseKinematicsTool::runInverseKinematicsWithOrientationsF
 
     
     std::thread forwardThread([&] {OpenSim::UKFIMUInverseKinematicsTool::UKFTool(
-        model, nqf, nuf, yMapFromSimbodyToEigen, yMapFromEigenToSimbody, yMapFromSimbodyToOpenSim, oMapFromDataToModel, 
-        priorStatsBuffer, fwdBwdMutex, condVar, fwdDone, s0, analysisSet, oRefs, ikSolver, 
+        nqf, nuf, yMapFromSimbodyToEigen, yMapFromEigenToSimbody, yMapFromSimbodyToOpenSim, oMapFromDataToModel, 
+        priorStatsBuffer, fwdBwdMutex, condVar, fwdDone, s0, oRefs, ikSolver, 
         modelOrientationErrors, visualizeResults, orientationErrors, processCovScales);});
     
-    std::thread backwardThread([&] {OpenSim::UKFIMUInverseKinematicsTool::computeBackwardPass(
-        priorStatsBuffer,fwdBwdMutex, condVar, fwdDone, yMapFromEigenToSimbody, yMapFromSimbodyToOpenSim, nqf, nuf);});
+    /*
+    std::thread forwardThread(OpenSim::UKFIMUInverseKinematicsTool::UKFTool, model, nqf, nuf, yMapFromSimbodyToEigen, 
+    yMapFromEigenToSimbody, yMapFromSimbodyToOpenSim, oMapFromDataToModel, 
+    priorStatsBuffer, fwdBwdMutex, condVar, fwdDone, s0, analysisSet, oRefs, ikSolver, 
+    modelOrientationErrors, visualizeResults, writeUKF, get_reportErrors, orientationErrors, 
+    numCPUCores, order, lagLength, alpha, beta, kappa, missingDataScale, imuRMSinDeg, sgma2w, processCovScales);
+    */
     
+    std::thread backwardThread([&] {OpenSim::UKFIMUInverseKinematicsTool::computeBackwardPass(model, 
+        priorStatsBuffer,fwdBwdMutex, condVar, fwdDone, yMapFromEigenToSimbody, analysisSet, yMapFromSimbodyToOpenSim, nqf, nuf);});
+    
+    /*
+    std::thread backwardThread(OpenSim::UKFIMUInverseKinematicsTool::computeBackwardPass,priorStatsBuffer, fwdBwdMutex, 
+    condVar, fwdDone, lagLength, yMapFromEigenToSimbody, yMapFromSimbodyToOpenSim, nqf, nuf, order, writeUKF);
+    */
 
     forwardThread.join();
     backwardThread.join();
@@ -309,6 +335,25 @@ void OpenSim::UKFIMUInverseKinematicsTool::runInverseKinematicsWithOrientationsF
     delete condVar;
     delete fwdDone;
     delete priorStatsBuffer;
+
+    /*
+    for (auto time : times) {
+        s0.updTime() = time;
+        ikSolver.track(s0);
+        if (get_report_errors()) {
+            ikSolver.computeCurrentOrientationErrors(orientationErrors);
+            modelOrientationErrors->appendRow(
+                    s0.getTime(), orientationErrors);
+        }
+        if (visualizeResults)  
+            model.getVisualizer().show(s0);
+        else
+            log_info("Solved at time: {} s", time);
+        // realize to report to get reporter to pull values from model
+        analysisSet.step(s0, step++);
+        model.realizeReport(s0);
+    }
+    */
 
     auto report = ikReporter->getTable();
     // form resultsDir either from results_directory or output_motion_file
@@ -396,21 +441,26 @@ OpenSim::TimeSeriesTable_<SimTK::Vec3> OpenSim::UKFIMUInverseKinematicsTool::loa
 
 // The actual workhorse of UKF-IK
 //template <class T>
-void OpenSim::UKFIMUInverseKinematicsTool::UKFTool(OpenSim::Model& model, int nqf, int nuf, std::map<int, int> yMapFromSimbodyToEigen, 
+void OpenSim::UKFIMUInverseKinematicsTool::UKFTool(int nqf, int nuf, std::map<int, int> yMapFromSimbodyToEigen, 
         std::map<int, int> yMapFromEigenToSimbody, std::map<int, std::string> yMapFromSimbodyToOpenSim, std::map<int, int> oMapFromDataToModel,
         std::queue<std::vector<Eigen::MatrixXd>>* priorStatsBuffer, 
-        std::mutex* fwdBwdMutex, std::condition_variable* condVar, bool* fwdDone, SimTK::State& s, OpenSim::AnalysisSet& analysisSet,
+        std::mutex* fwdBwdMutex, std::condition_variable* condVar, bool* fwdDone, SimTK::State& s, 
         OpenSim::OrientationsReference oRefs, OpenSim::InverseKinematicsSolver& ikSolver,
         std::shared_ptr<OpenSim::TimeSeriesTable> modelOrientationErrors, bool visualizeResults,
         SimTK::Array_<double> orientationErrors, SimTK::Vector_<double> processCovScales) {
 
 	log_info("Got inside UKFTOOL");
 
-
+    SimTK::State ss;
     // If the process covariance scale factors are not provided, use simply ones
     if (processCovScales.size() == 0) {
         processCovScales = SimTK::Vector_<double>(get_order(), 1.0);
         log_info("Process covariance scales not provided, using ones instead.");
+    }
+
+    {
+        std::unique_lock<std::mutex> lock(*fwdBwdMutex);
+        ss = SimTK::State(s);
     }
 
     auto times = oRefs.getTimes();
@@ -436,8 +486,8 @@ void OpenSim::UKFIMUInverseKinematicsTool::UKFTool(OpenSim::Model& model, int nq
     //int const ny = oRefs.getNumRefs(); // number of osensors, maybe same as above?
 
 
-    int const nq = s.getNQ(); // number of generalized positions (joint angles)
-    int const nu = s.getNU(); // number of generalized velocities (joint angular
+    int const nq = ss.getNQ(); // number of generalized positions (joint angles)
+    int const nu = ss.getNU(); // number of generalized velocities (joint angular
                         // velocities)
     int const nr = std::min(nq, nu); // probably not needed, usually nq >= nu
 
@@ -532,10 +582,10 @@ void OpenSim::UKFIMUInverseKinematicsTool::UKFTool(OpenSim::Model& model, int nq
     //qf.setZero();
     SimTK::Vector_<double> q(nq);
     std::vector<SimTK::Vector_<double>*> arr_q;
-    q = s.getQ();
+    q = ss.getQ();
     SimTK::Vector_<double> u(nu);
     std::vector<SimTK::Vector_<double>*> arr_u;
-    u = s.getU();
+    u = ss.getU();
     for (std::map<int, int>::iterator it = yMapFromSimbodyToEigen.begin(); it != yMapFromSimbodyToEigen.end(); ++it) {
         x(it->second) = q(it->first);
     }
@@ -584,7 +634,6 @@ void OpenSim::UKFIMUInverseKinematicsTool::UKFTool(OpenSim::Model& model, int nq
     Eigen::MatrixXd Sigmaprops(nqf + (order*nuf), 2 * (nqf + (order*nuf)) + 1);
     Eigen::MatrixXd Sigmas2props(3 * ny, 2 * (nqf + (order*nuf)) + 1);
 
-    SimTK::State ss = s;
     std::vector<SimTK::State*> arr_ss;
     SimTK::Vector_<double> qdot;
     Eigen::MatrixXd xsave(nqf + (order*nuf), 1);
@@ -638,14 +687,14 @@ void OpenSim::UKFIMUInverseKinematicsTool::UKFTool(OpenSim::Model& model, int nq
 
     for (int ii = 0; ii < num_cores; ii++) {
         //OpenSim::Model* model_clone = model.clone();
-        OpenSim::Model* model_clone = new Model(get_model_file());
+        OpenSim::Model* model_clone = new OpenSim::Model(get_model_file());
         models.push_back(model_clone);  //Alternatively, emplace_back(), but that *should* be slower
         models[ii]->initSystem();
         OpenSim::InverseKinematicsSolver* aSolver = new OpenSim::InverseKinematicsSolver(*(models[ii]), nullptr,
                 std::make_shared<OpenSim::OrientationsReference>(oRefs),
                 coordRefArray);
         aSolver->setAccuracy(1e-4);
-        aSolver->assemble(s);
+        aSolver->assemble(ss);
         solvers.push_back(aSolver);     //Alternatively, emplace_back(), but that *should* be slower
         //delete aSolver;
         //delete model_clone;
@@ -679,11 +728,11 @@ void OpenSim::UKFIMUInverseKinematicsTool::UKFTool(OpenSim::Model& model, int nq
     for (int ii = 0; ii < num_cores; ii++) {
         std::map<int, int>* aMap = new std::map<int,int>(yMapFromEigenToSimbody);
         arr_yMapFromEigenToSimbody.push_back(aMap);
-        SimTK::State* aState = new SimTK::State(s);
+        SimTK::State* aState = new SimTK::State(ss);
         arr_ss.push_back(aState);
-        SimTK::Vector_<double>* aQ = new SimTK::Vector_<double>(s.getQ());
+        SimTK::Vector_<double>* aQ = new SimTK::Vector_<double>(ss.getQ());
         arr_q.push_back(aQ);
-        SimTK::Vector_<double>* aU = new SimTK::Vector_<double>(s.getU());
+        SimTK::Vector_<double>* aU = new SimTK::Vector_<double>(ss.getU());
         arr_u.push_back(aU);
         Eigen::MatrixXd* aX = new Eigen::MatrixXd((nqf + (order*nuf)), 1);
         aX->setZero();
@@ -738,9 +787,9 @@ void OpenSim::UKFIMUInverseKinematicsTool::UKFTool(OpenSim::Model& model, int nq
         else {
 
             // Step 0. Cholesky factorization of state covariance            
-            s.updTime() = time;
-            s.updQ() = q;
-            s.updU() = u;
+            ss.updTime() = time;
+            ss.updQ() = q;
+            ss.updU() = u;
 
             ss.updTime() = time;
             ss.updQ() = q;  //ss.setQ(q) failed to update some elements; is this supposed to happen?
@@ -778,6 +827,34 @@ void OpenSim::UKFIMUInverseKinematicsTool::UKFTool(OpenSim::Model& model, int nq
                                 //xx((it->first)+(irow*nuf)) += fCoeffs(irow, icol) * x((it->first)+(icol*nuf));
                                 arr_xx[ithr]->block((irow*nuf), 0, nuf, 1) += fCoeffs(irow, icol) * Sigmas.col(ii).block((icol*nuf), 0, nuf, 1);
                             }
+                        }
+                        
+                        for (std::map<int, int>::iterator it = yMapFromEigenToSimbody.begin(); it != yMapFromEigenToSimbody.end(); ++it) {
+                            q(it->second) = x(it->first);
+                        }
+                        for (std::map<int, int>::iterator it =
+                                yMapFromEigenToSimbody.begin();
+                                it != yMapFromEigenToSimbody.end(); ++it) {
+                            u(it->second) = x((it->first)+nqf);
+                        }
+                        qdot = u;
+                        for (std::map<int, int>::iterator it = yMapFromEigenToSimbody.begin(); it != yMapFromEigenToSimbody.end(); ++it) {
+                            q(it->second) = x(it->first) + deltaTime * qdot(it->second);
+                        }
+                        for (std::map<int, int>::iterator it =
+                                yMapFromEigenToSimbody.begin();
+                                it != yMapFromEigenToSimbody.end(); ++it) {
+                            //u(it->second) = 2 * x((it->first)+nqf) - u_old(it->second);
+                            u(it->second) = x((it->first) + nqf);
+                        }
+
+                        for (std::map<int, int>::iterator it = yMapFromSimbodyToEigen.begin(); it != yMapFromSimbodyToEigen.end(); ++it) {
+                            x(it->second) = q(it->first);
+                        }
+                        for (std::map<int, int>::iterator it =
+                                yMapFromSimbodyToEigen.begin();
+                                it != yMapFromSimbodyToEigen.end(); ++it) {
+                            x((it->second)+nqf) = u(it->first);
                         }
                         
                         Sigmaprops.col(ii) = (*(arr_xx[ithr]));
@@ -832,7 +909,7 @@ void OpenSim::UKFIMUInverseKinematicsTool::UKFTool(OpenSim::Model& model, int nq
             priorStatsVector.emplace_back(C);
 
             // Resample the sigma points after propagating through process model (optional)
-            // if (get_enable_resampling() == true)
+            // get_enable_resampling() == true
             if (true) {
                 llt.compute((nqf + (order*nuf) + lambda) * P);
                 SS = llt.matrixL();
@@ -871,7 +948,7 @@ void OpenSim::UKFIMUInverseKinematicsTool::UKFTool(OpenSim::Model& model, int nq
                             arr_ss[ithr]->updU() = (*(arr_u[ithr]));
                         }
                         solvers[ithr]->setState(*(arr_ss[ithr])); //method added to AssemblySolver (like in Kalman Smoother)
-                        models[ithr]->getMultibodySystem().realize(*(arr_ss[ithr]), SimTK::Stage::Velocity);
+                        //models[ithr]->getMultibodySystem().realize(*(arr_ss[ithr]), SimTK::Stage::Velocity);
                         //model.getMultibodySystem().realize(ss, SimTK::Stage::Velocity);
                         solvers[ithr]->computeCurrentSensorOrientations(*(arr_osensorOrientations[ithr]));
                         //ikSolver.computeCurrentSensorOrientations(osensorOrientations);                        
@@ -1037,6 +1114,7 @@ void OpenSim::UKFIMUInverseKinematicsTool::UKFTool(OpenSim::Model& model, int nq
             }
             (*condVar).notify_one();
 
+            /*
             // Step 12b. Update Kalman gain to satisfy position constraints (nope)
             for (std::map<int, int>::iterator it = yMapFromEigenToSimbody.begin(); it != yMapFromEigenToSimbody.end(); ++it) {
                 q(it->second) = x(it->first);
@@ -1049,13 +1127,39 @@ void OpenSim::UKFIMUInverseKinematicsTool::UKFTool(OpenSim::Model& model, int nq
             ss.updQ() = q;
             ss.updU() = u;
 
+            //try {
+            //	model.getMatterSubsystem().calcPq(ss, A);
+            //	//NOTE: only holonomic constraints!!! FIX
+            //	throw 66;
+            //}
+            //catch (int myNum) {
+            //	log_info("No holonomic constraints found, no projection made.");
+   //             s.updQ() = q;
+   //             s.updU() = u;
+            //}
+   //         try {
+   //             qerr = A * q;
+   //             q -= (~A * (A * ~A).invert()) * qerr;
+   //             s.updQ() = q;
+   //             s.updU() = u;
+   //             throw 67;
+   //         }
+   //         catch (int myNum2) {
+   //             log_info("Could not project to constraint manifold.");
+   //             s.updQ() = q;
+   //             s.updU() = u;
+   //         }
+            s.updQ() = q;
+            s.updU() = u;
             ikSolver.setState(s);
-			model.getMultibodySystem().realize(s, SimTK::Stage::Velocity);
+            */
+			//model.getMultibodySystem().realize(s, SimTK::Stage::Velocity);
 			//log_info("Managed to set q and u for state.");
         }
 
 
-		if (get_report_errors()) {
+		/*
+        if (get_report_errors()) {
             ikSolver.computeCurrentOrientationErrors(orientationErrors);
             modelOrientationErrors->appendRow(
                     s.getTime(), orientationErrors);
@@ -1070,6 +1174,7 @@ void OpenSim::UKFIMUInverseKinematicsTool::UKFTool(OpenSim::Model& model, int nq
         // realize to report to get reporter to pull values from model
         analysisSet.step(s, step++);
         model.realizeReport(s);
+        */
 
         // Abort running inverse kinematics in case of significant numerical instabilities
         if ((double)ydiff.cwiseAbs().mean() > 0.75) {
@@ -1108,6 +1213,42 @@ void OpenSim::UKFIMUInverseKinematicsTool::UKFTool(OpenSim::Model& model, int nq
 
 }  //end of IMUInverseKinematicsTool::UKFTool
 
+/*
+std::tuple<std::map<std::string, int>, std::map<int, std::string>> OpenSim::UKFIMUInverseKinematicsTool::CreateYMaps(OpenSim::Model model) {
+    model.initSystem();
+    SimTK::State ss = model.getWorkingState();
+    SimTK::Array_<std::string> modelStateVariableNames = model.getCoordinateNamesInMultibodyTreeOrder();
+    //OpenSim::Array<std::string> modelStateVariableNames = model.getStateVariableNames();
+    int numQ = model.getNumCoordinates();
+    //int numY = model.getNumStateVariables();
+    ss.updY() = 0;
+    std::map<std::string, int> yMapFromOpenSimToSimbody;
+    std::map<int, std::string> yMapFromSimbodyToOpenSim;
+    //SimTK::Vector modelStateVariableValues;
+    for (int iy = 0; iy < numQ; iy++) { //this y-index runs for Simbody
+        ss.updY()[iy] = SimTK::NaN;
+        auto modelStateVariables = model.getCoordinatesInMultibodyTreeOrder();
+        for (int ii = 0; ii < (int) modelStateVariableNames.size(); ii++) {   //this index runs for OpenSim
+            if (SimTK::isNaN(modelStateVariables[ii]->getStateVariableValues(ss)[0])) {
+                yMapFromOpenSimToSimbody.insert(std::pair<std::string, int>(modelStateVariableNames[ii], iy));
+                yMapFromSimbodyToOpenSim.insert(std::pair<int, std::string>(iy, modelStateVariableNames[ii]));
+                ss.updY()[iy] = 0;
+                break;
+            }
+        }
+        if (SimTK::isNaN(ss.updY()[iy])) {
+            // If we reach here, this is an unused slot for a quaternion (from Antoine Felisse code)
+            ss.updY()[iy] = 0;
+        }
+    }
+    std::tuple<std::map<std::string, int>, std::map<int, std::string>> mappings(yMapFromOpenSimToSimbody, yMapFromSimbodyToOpenSim);
+    if (numQ != (int)yMapFromOpenSimToSimbody.size()) {
+        log_info("There were {} state variables, but got {} mappings from OpenSim to Simbody!", numQ,
+                (int)yMapFromOpenSimToSimbody.size());
+    }
+    return mappings;
+}
+*/
 
 std::tuple<std::map<std::string, int>, std::map<int, std::string>> OpenSim::UKFIMUInverseKinematicsTool::CreateYMaps(OpenSim::Model model) {
 	model.initSystem();
@@ -1160,9 +1301,20 @@ void OpenSim::UKFIMUInverseKinematicsTool::deletePointers(std::vector<T*>& vec) 
 }
 
 //template <class T>
-void OpenSim::UKFIMUInverseKinematicsTool::computeBackwardPass(std::queue<std::vector<Eigen::MatrixXd>>* priorStatsBuffer, 
+void OpenSim::UKFIMUInverseKinematicsTool::computeBackwardPass(OpenSim::Model& model, std::queue<std::vector<Eigen::MatrixXd>>* priorStatsBuffer, 
     std::mutex* fwdBwdMutex, std::condition_variable* condVar, bool* fwdDone, std::map<int, int> yMapFromEigenToSimbody, 
-    std::map<int, std::string> yMapFromSimbodyToOpenSim, int nqf, int nuf) {
+    OpenSim::AnalysisSet& analysisSet, std::map<int, std::string> yMapFromSimbodyToOpenSim, int nqf, int nuf) {
+
+    SimTK::State ss;
+
+    {
+        std::unique_lock<std::mutex> lock(*fwdBwdMutex);
+        ss = SimTK::State(model.getWorkingState());
+    }
+    
+    SimTK::Vector q = ss.getQ();
+    SimTK::Vector u = ss.getU();
+    int step = 0;
     std::vector<Eigen::MatrixXd> bwdPriorStats;
     std::deque<Eigen::MatrixXd> currentTimes;
     std::deque<Eigen::MatrixXd> currentPriorMeans;
@@ -1345,6 +1497,25 @@ void OpenSim::UKFIMUInverseKinematicsTool::computeBackwardPass(std::queue<std::v
                 currentPosteriorAutoCovs.pop_front();
             }
         }
+        // Send results to the reporter
+        if (writeToFile) {
+            for (std::map<int, int>::iterator it = yMapFromEigenToSimbody.begin(); it != yMapFromEigenToSimbody.end(); ++it) {
+                q(it->second) = smoothPosteriorMean(it->first);
+            }
+            for (std::map<int, int>::iterator it =
+                            yMapFromEigenToSimbody.begin();
+                    it != yMapFromEigenToSimbody.end(); ++it) {
+                u(it->second) = smoothPosteriorMean((it->first)+nqf);
+            }
+            ss.updTime() = time;
+            ss.updQ() = q;
+            ss.updU() = u;
+            log_info("Solved at time: {} s", time);
+            // realize to report to get reporter to pull values from model
+            analysisSet.step(ss, step++);
+            model.realizeReport(ss);
+        }        
+            
         // Write the state to result files
         if (get_write_UKF() && writeToFile) {
             if (order > 1) {

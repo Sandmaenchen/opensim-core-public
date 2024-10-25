@@ -53,12 +53,13 @@
 #include "simbody/internal/SimbodyMatterSubsystem.h"
 #include "simbody/internal/AssemblyCondition_OrientationSensors.h"
 #include <OpenSim/Tools/IMUInverseKinematicsTool.h>
-//#include <Eigen/Eigen>
-//#include <Eigen/Eigenvalues>
-//#include <Eigen/Cholesky>
-#include "Eigen/Eigen"
-#include "Eigen/Eigenvalues"
-#include "Eigen/Cholesky"
+#include <Eigen/Eigen>
+#include <Eigen/Eigenvalues>
+#include <Eigen/Cholesky>
+//#define EIGEN_USE_MKL_ALL 
+//#include "Eigen/Eigen"
+//#include "Eigen/Eigenvalues"
+//#include "Eigen/Cholesky"
 #include <thread>
 #include <mutex>
 #include <iostream>
@@ -210,10 +211,10 @@ public:
             const std::string& quaternionStoFileName, bool visualizeResults=false, SimTK::Vector_<double> processCovScales = SimTK::Vector_<double>());
 
     //template <class T>
-    void UKFTool(Model& model, int nqf, int nuf, std::map<int, int> yMapFromSimbodyToEigen, std::map<int, int> yMapFromEigenToSimbody, 
+    void UKFTool(int nqf, int nuf, std::map<int, int> yMapFromSimbodyToEigen, std::map<int, int> yMapFromEigenToSimbody, 
             std::map<int, std::string> yMapFromSimbodyToOpenSim, std::map<int, int> oMapFromDataToModel, 
             std::queue<std::vector<Eigen::MatrixXd>>* priorStatsBuffer, std::mutex* fwdBwdMutex, 
-            std::condition_variable* condVar, bool* fwdDone, SimTK::State& s, OpenSim::AnalysisSet& analysisSet,
+            std::condition_variable* condVar, bool* fwdDone, SimTK::State& s,
             OpenSim::OrientationsReference oRefs, OpenSim::InverseKinematicsSolver& ikSolver,
             std::shared_ptr<OpenSim::TimeSeriesTable> modelOrientationErrors, bool visualizeResults, SimTK::Array_<double> orientationErrors,
             SimTK::Vector_<double> processCovScales = SimTK::Vector_<double>());
@@ -226,8 +227,8 @@ public:
     void deletePointers(std::vector<T*>& vec);
 
     //template <class T>
-    void computeBackwardPass(std::queue<std::vector<Eigen::MatrixXd>>* priorStatsBuffer, std::mutex* fwdBwdMutex, 
-    std::condition_variable* condVar, bool* fwdDone, std::map<int, int> yMapFromEigenToSimbody, 
+    void computeBackwardPass(Model& model, std::queue<std::vector<Eigen::MatrixXd>>* priorStatsBuffer, std::mutex* fwdBwdMutex, 
+    std::condition_variable* condVar, bool* fwdDone, std::map<int, int> yMapFromEigenToSimbody, AnalysisSet& analysisSet, 
     std::map<int, std::string> yMapFromSimbodyToOpenSim, int nqf, int nuf);
 
 private:
