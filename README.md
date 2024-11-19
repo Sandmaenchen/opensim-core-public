@@ -28,13 +28,13 @@
 
 ---
 
-**NOTE: This repository contains the source code of OpenSim 4.x. For OpenSim 3.x or earlier, see [this link](https://simtk-confluence.stanford.edu/display/OpenSim/Building+OpenSim+from+Source).**
+**NOTE: This repository contains the source code for my customized version of OpenSim 4.5.**
 
 OpenSim is software that lets users develop models of musculoskeletal structures and create dynamic simulations of movement, such as this one:
 
 <!-- OpenSim Simulation -->
 <p align="center">
-    <img src="doc/images/opensim_running.gif" alt=Simulation of human running by Sam Hamner (doi:10.1016/j.jbiomech.2010.06.025)¨>
+    <img src="doc/images/opensim_running.gif" alt=Simulation of human running by Sam Hamner (doi:10.1016/j.jbiomech.2010.06.025)Â¨>
 </p>
 
 More information can be found at our websites:
@@ -48,6 +48,7 @@ This repository contains:
  - OpenSim's C++ examples.
  - OpenSim's command-line applications (inverse kinematics, computed muscle control, etc.).
  - OpenSim's Java and Python bindings.
+ - My implementation of unscented Kalman filter for solving inverse kinematics based on inertial motion capture data. 
  
 This repository does *not* include source code for the OpenSim GUI. The source code for the Opensim GUI can be found [here](https://github.com/opensim-org/opensim-gui).
 
