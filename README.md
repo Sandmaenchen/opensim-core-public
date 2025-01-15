@@ -28,79 +28,77 @@
 
 ---
 
-**NOTE: This repository contains the source code for my customized version of OpenSim 4.5.**
+**NOTE: This branch contains the source code for my customized version of OpenSim 4.5.**
 
-OpenSim is software that lets users develop models of musculoskeletal structures and create dynamic simulations of movement, such as this one:
 
-<!-- OpenSim Simulation -->
-<p align="center">
-    <img src="doc/images/opensim_running.gif" alt=Simulation of human running by Sam Hamner (doi:10.1016/j.jbiomech.2010.06.025)¨>
-</p>
+## Building and installing
 
-More information can be found at our websites:
+Instructions partially follow [this reference](https://opensimconfluence.atlassian.net/wiki/spaces/OpenSim/pages/53085346/Scripting+in+Python) [Accessed: 2024-05-13].
 
-* [OpenSim website](http://opensim.stanford.edu), in particular the [support page](http://opensim.stanford.edu/support/index.html).
-* [SimTK project website](https://simtk.org/home/opensim).
+1. In terminal, run the command `sudo apt update`, followed by {`sudo apt upgrade`}.
+2. Install Eigen 3.4.0 with the command `sudo apt install libeigen3-dev`.
+3. Copy the Eigen directory with the command `sudo cp -r /usr/include/eigen3/Eigen/ /usr/local/include/Eigen`.
+4. Download the script `opensim-core-ukf-linux-build-script.sh` from https://github.com/Sandmaenchen/opensim-core-public/tree/ukf-uks-tools/scripts/build. Ensure that *CORE_BRANCH* flag is set to *ukf-uks-tools*. 
+5. Make the script runnable with `chmod +x opensim-core-ukf-linux-build-script.sh`
+6. Run the script with the command `./opensim-core-ukf-linux-build-script.sh`. 
+* This can take a lot of time.
+7. Install Python setup tools with the command `sudo apt-get install python-setuptools`.
+8. Navigate: `cd ~/opensim-core/sdk/Python`.
+9. Run the command `sudo python3 setup.py install`.
+* By default, this command installs to `/usr/` directory where your user has no writing permission by default. If, in addition, `root` cannot access the directory where OpenSim was built and installed (e.g., your user's `/home/` directory), you can set the *PYTHONUSERBASE* environment variable (add this also to your bash profile file) to point to the directory accessible by your user; afterwards, install the package with the command `python3 setup.py install --user`.
+10. Edit your bash profile file with the commmand `nano ~/.bashrc`. Add the line `export LD_LIBRARY_PATH=\$LD_LIBRARY_PATH: /home/<your_username>/opensim-core/sdk/Simbody/lib}` at the end of the bash profile file.
+11. Run the command `export LD_LIBRARY_PATH=\$LD_LIBRARY_PATH: /home/<your_username>/opensim-core/sdk/Simbody/lib` in order to be able to use OpenSim in the current session.
 
-This repository contains:
+## How to run on Windows 11
 
- - OpenSim's C++ libraries.
- - OpenSim's C++ examples.
- - OpenSim's command-line applications (inverse kinematics, computed muscle control, etc.).
- - OpenSim's Java and Python bindings.
- - My implementation of unscented Kalman filter for solving inverse kinematics based on inertial motion capture data. 
- 
-This repository does *not* include source code for the OpenSim GUI. The source code for the Opensim GUI can be found [here](https://github.com/opensim-org/opensim-gui).
+We haven't been able to build OpenSim on Windows 11. If you wish to test our software on Windows machine, the easiest path would be to run a Linux virtual machine (VM) using Python API.
 
-## Download and Setup
+# Setting up and running WSL2
 
-Depending on your needs, there are different ways of downloading and setting up OpenSim:
+1. Select Start $\rightarrow$ Turn Windows features on or off. Ensure the following are enabled:
+* Hyper-V
+* Virtual Machine Platform
+* Windows PowerShell 2.0
+* Windows Subsystem for Linux
+2. Start PowerShell (as admin), and run the command `wsl --install`. Set your username and password when asked. Restart.
+3. Set WSL2 as default by running in PowerShell the command `wsl --set-default-version 2`.
+4. Update with the command `wsl --update`.
+5. Change to correct Linux distribution with the command `wsl --install -d Ubuntu-22.04`. 
+6. Run the VM and login with the command `wsl --user <your_username>` (Quit with the command `exit`).
 
-- **OpenSim GUI**
-  - [Download page](https://simtk.org/frs/?group_id=91)
-  - [Scripting in the GUI](https://simtk-confluence.stanford.edu/display/OpenSim/Scripting+in+the+GUI)
-- **Matlab and Python Scripting**
-  - [Setup Instructions](https://simtk-confluence.stanford.edu/display/OpenSim/Scripting)
-- **Scripting in Conda**
-  - [Conda Package](https://anaconda.org/opensim-org/opensim)
-  - [Source Code](https://github.com/opensim-org/conda-opensim)
-  - [More Info](https://simtk-confluence.stanford.edu/display/OpenSim/Conda+Package)
-- **C++ Development**
-  - [Build Instructions](https://github.com/opensim-org/opensim-core/wiki/Build-Instructions) for Windows, macOS, and Linux (Ubuntu and Debian).
-  - [Developer's Guide](https://simtk-confluence.stanford.edu/display/OpenSim/Developer%27s+Guide)
-  - [API Reference](https://simtk.org/api_docs/opensim/api_docs)
-- **Looking for help?**
-  - [Ask a question](https://simtk.org/plugins/phpBB/indexPhpbb.php?group_id=91&pluginname=phpBB)
-  - [Submit an Issue](https://github.com/opensim-org/opensim-core/issues)
+# Accessing files on virtual machine disk
 
-## Documentation
+Open File Explorer and navigate to `\\wsl\$`. The mounting point of VM (Ubuntu-22.04) is the root directory (i.e., `/`) of the Linux system.
 
-OpenSim's documentation can be found in our [Documentation](https://simtk-confluence.stanford.edu/display/OpenSim/Documentation) website. 
-OpenSim's C++ API reference can be found [here](https://simtk.org/api_docs/opensim/api_docs/).
+# An example template for Python script
 
-A simple example of an elbow simulation in C++, Python and Matlab can be found in the [OpenSim API Example](https://github.com/opensim-org/opensim-core/wiki/OpenSim-API-Example) page of this repository's wiki.
+The following is a template for Python script that creates an object from our UKF-based tool class and runs it.
 
-Examples and Tutorials for OpenSim can be found in the [Examples and tutorials](https://simtk-confluence.stanford.edu/display/OpenSim/Examples+and+Tutorials) website. These tutorials move from introductory to more advanced, so you can learn OpenSim in a progressive way. Additional OpenSim-based tutorials, homework problems, and project ideas are available on the [Biomechanics of Movement classroom site](https://simtk-confluence-homeworks.stanford.edu/pages/viewpage.action?pageId=5537857). 
+~~~~
+import opensim as osim\
+tool = osim.UKFIMUInverseKinematicsTool()
+tool.set_model_file(modelFileName)
+tool.set_orientations_file(orientationsFileName)
+tool.set_sensor_to_opensim_rotations(osim.Vec3(0, 0, 0))
+tool.set_results_directory(resultsDirectory)
+tool.set_alpha(1.0)
+tool.set_beta(2.0)
+tool.set_kappa(-1.337) #value for (3-n)
+tool.set_order(2)
+tool.set_lag_length(5)
+tool.set_num_threads(6)
+tool.set_write_UKF(True)
+tool.set_sgma2w(2.0**14)
+tool.set_missing_data_scale(100.0)
+tool.set_imu_RMS_in_deg(osim.Vec3(0.5, 1.0, 0.5))
+tool.set_enable_resampling(True)
+tool.set_process_covariance_method(0)
+tool.set_time_range(0, startTime) 
+tool.set_time_range(1, endTime)   
+tool.run(False, osim.Vector((order+1), 1.0))
+~~~~
 
-## Releases [![GitHub release (latest by date including pre-releases)](https://img.shields.io/github/v/release/opensim-org/opensim-core?include_prereleases)](https://github.com/opensim-org/opensim-core/releases)
 
-This repository contains releases for OpenSim 4.x. You can find all of the OpenSim's releases in the [Releases](https://github.com/opensim-org/opensim-core/releases) page of this repository.
-
-## Build instructions [![platforms](https://img.shields.io/badge/platform-windows%20%7C%20macos%20%7C%20linux-lightgrey)](https://github.com/opensim-org/opensim-core/wiki/Build-Instructions)
-
-We provide scripts to build OpenSim on Windows, macOS and Linux (Ubuntu and Debian). The instructions to download and execute the scripts can be found in the [Build Instructions](https://github.com/opensim-org/opensim-core/wiki/Build-Instructions) page of this repository's wiki.
-
-## Contribute [![GitHub contributors](https://img.shields.io/github/contributors/opensim-org/opensim-core)](https://github.com/opensim-org/opensim-core/graphs/contributors)
-
-There are many ways in which you can participate in this project. For example:
-
- - Report bugs and request features by submitting a [GitHub Issue](https://github.com/opensim-org/opensim-core/issues).
- - Ask and answer questions on our [Forum](https://simtk.org/plugins/phpBB/indexPhpbb.php?group_id=91&pluginname=phpBB).
- - Review and test new [Pull Requests](https://github.com/opensim-org/opensim-core/pulls).
- - Review the [Documentation](https://simtk-confluence.stanford.edu:8443/display/OpenSim/Documentation) and the [Wiki](https://github.com/opensim-org/opensim-core/wiki) by reporting typos, confusing explanations and adding/suggesting new content.
- - Fix bugs and contribute to OpenSim's source code by creating a [Pull Requests](https://github.com/opensim-org/opensim-core/pulls).
-
-Please, read our [Developer's guide](https://simtk-confluence.stanford.edu:8443/display/OpenSim/Developer%27s+Guide), [Developer's Guidelines](https://github.com/opensim-org/opensim-core/blob/master/DEVELOPING.md) and our [Code of Conduct](https://github.com/opensim-org/opensim-core/blob/master/CODE_OF_CONDUCT.md) before making a pull request. 
 
 ## License [![License](https://img.shields.io/hexpm/l/apa)](https://github.com/opensim-org/opensim-core/blob/master/LICENSE.txt)
 
