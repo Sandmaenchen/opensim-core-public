@@ -46,8 +46,8 @@ Instructions partially follow [this reference](https://opensimconfluence.atlassi
 8. Navigate: `cd ~/opensim-core/sdk/Python`.
 9. Run the command `sudo python3 setup.py install`.
 * By default, this command installs to `/usr/` directory where your user has no writing permission by default. If, in addition, `root` cannot access the directory where OpenSim was built and installed (e.g., your user's `/home/` directory), you can set the *PYTHONUSERBASE* environment variable (add this also to your bash profile file) to point to the directory accessible by your user; afterwards, install the package with the command `python3 setup.py install --user`.
-10. Edit your bash profile file with the commmand `nano ~/.bashrc`. Add the line `export LD_LIBRARY_PATH=\$LD_LIBRARY_PATH: /home/<your_username>/opensim-core/sdk/Simbody/lib}` at the end of the bash profile file.
-11. Run the command `export LD_LIBRARY_PATH=\$LD_LIBRARY_PATH: /home/<your_username>/opensim-core/sdk/Simbody/lib` in order to be able to use OpenSim in the current session.
+10. Edit your bash profile file with the commmand `nano ~/.bashrc`. Add the line `export LD_LIBRARY_PATH=$LD_LIBRARY_PATH: /home/<your_username>/opensim-core/sdk/Simbody/lib}` at the end of the bash profile file.
+11. Run the command `export LD_LIBRARY_PATH=$LD_LIBRARY_PATH: /home/<your_username>/opensim-core/sdk/Simbody/lib` in order to be able to use OpenSim in the current session.
 
 ## How to run on Windows 11
 
