@@ -31,7 +31,7 @@
 **NOTE: This branch contains the source code for my customized version of OpenSim 4.5.**
 
 
-## Building and installing
+## Building and installing on Ubuntu
 
 Instructions partially follow [this reference](https://opensimconfluence.atlassian.net/wiki/spaces/OpenSim/pages/53085346/Scripting+in+Python) [Accessed: 2024-05-13].
 
@@ -53,7 +53,7 @@ Instructions partially follow [this reference](https://opensimconfluence.atlassi
 
 We haven't been able to build OpenSim on Windows 11. If you wish to test our software on Windows machine, the easiest path would be to run a Linux virtual machine (VM) using Python API.
 
-# Setting up and running WSL2
+### Setting up and running WSL2
 
 1. Select Start $\rightarrow$ Turn Windows features on or off. Ensure the following are enabled:
 * Hyper-V
@@ -66,11 +66,11 @@ We haven't been able to build OpenSim on Windows 11. If you wish to test our sof
 5. Change to correct Linux distribution with the command `wsl --install -d Ubuntu-22.04`. 
 6. Run the VM and login with the command `wsl --user <your_username>` (Quit with the command `exit`).
 
-# Accessing files on virtual machine disk
+### Accessing files on virtual machine disk
 
 Open File Explorer and navigate to `\\wsl\$`. The mounting point of VM (Ubuntu-22.04) is the root directory (i.e., `/`) of the Linux system.
 
-# An example template for Python script
+## An example template for Python script
 
 The following is a template for Python script that creates an object from our UKF-based tool class and runs it.
 
