@@ -90,6 +90,16 @@ public:
             "Set of orientation weights identified by orientation name with "
             "weight being a positive scalar. If not provided, all IMU "
             "orientations are tracked with weight 1.0.");
+    OpenSim_DECLARE_PROPERTY(base_imu_label, std::string,
+            "The label of the base IMU in the orientation_file_for_calibration used to account "
+            "for the heading difference between the sensor data and the forward "
+            "direction of the model. Leave blank if no heading correction is desired.");
+    OpenSim_DECLARE_PROPERTY(base_heading_axis, std::string,
+            "The axis of the base IMU that corresponds to its heading "
+            "direction. Options are 'x', '-x', 'y', '-y', 'z' or '-z'. "
+            "Leave blank if no heading correction is desired.");
+    OpenSim_DECLARE_PROPERTY(calibrate, bool, 
+            "Place the IMUs on the model according to the first frame of data.");
 
     //=============================================================================
 // METHODS

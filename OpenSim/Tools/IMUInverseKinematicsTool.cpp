@@ -40,6 +40,9 @@ void IMUInverseKinematicsTool::constructProperties()
     constructProperty_orientations_file("");
     OrientationWeightSet orientationWeights;
     constructProperty_orientation_weights(orientationWeights);
+    constructProperty_base_imu_label("");
+    constructProperty_base_heading_axis("");
+    constructProperty_calibrate(false);
 }
 /**
 void IMUInverseKinematicsTool::
@@ -261,6 +264,27 @@ bool IMUInverseKinematicsTool::run(bool visualizeResults)
 {
     if (_model.empty()) {
         _model.reset(new Model(get_model_file()));
+    }
+    if (get_calibrate() == true) {
+        IMUPlacer imuPlacer = IMUPlacer();
+        imuPlacer.setModel(*_model);
+        imuPlacer.set_base_imu_label(get_base_imu_label());
+        imuPlacer.set_base_heading_axis(get_base_heading_axis());
+        imuPlacer.set_sensor_to_opensim_rotations(get_sensor_to_opensim_rotations());
+        imuPlacer.set_orientation_file_for_calibration(get_orientations_file());
+        bool success = imuPlacer.run();
+        if (success) {
+            log_info("managed to calibrate");
+        }
+        else {
+            log_info("failed to calibrate");
+        }
+        log_info("trying to assign calibrated model next.");
+        //(*_model) = imuPlacer.getCalibratedModel();
+        _model.reset(new Model(imuPlacer.getCalibratedModel()));
+        log_info("managed to assign calibrated model.");
+        _model->finalizeFromProperties();
+        log_info("model: finalized from properties.");
     }
 
     runInverseKinematicsWithOrientationsFromFile(*_model,

@@ -1,14 +1,6 @@
 #ifndef COORDINATEDERIVATIVETOOL_H
 #define COORDINATEDERIVATIVETOOL_H
 
-/*
- * CoordinateDerivativeTool is written by University of Eastern Finland  *
- * and bases on the InverseDynamicsTool code written by Ajay Seth.       *
- *                                                                       *
- * The project was supported by the Research Council of Finland.         *
- *                                                                       *
- * Copyright (c) 2024 University of Eastern Finland                      *
- * Author(s): Matti Kortelainen                                          */
 
 #include <OpenSim/Common/Storage.h>
 #include "DynamicsTool.h"
@@ -45,11 +37,17 @@ private:
 
 public:
     virtual ~CoordinateDerivativeTool();
-    CoordinateDerivativeTool(std::string modelFileName, std::string statesFileName, std::string outputFileName);
-    CoordinateDerivativeTool();
+    CoordinateDerivativeTool(std::string modelFileName, std::string statesFileName, std::string outputFileName, std::string outputDirectory, double cutoffFreq, int splineDegree, int outputMaxDerOrder, bool outputDegrees);
+    //CoordinateDerivativeTool();
     void setModelFile(std::string modelFileName);
     void setStatesFile(std::string statesFileName);
     void setOutputFileName(std::string outputFileName);
+    void setOutputDirectory(std::string outputDirectory);
+    std::string getOutputDirectory();
+    void setCutoffFrequency(double cutoffFreq);
+    void setSplineDegree(int splineDegree);
+    void setOutputMaxDerOrder(int outputMaxDerOrder);
+    void setOutputDegrees(bool outputDegrees);
     bool run() override SWIG_DECLARE_EXCEPTION;
 
 protected:
@@ -58,6 +56,13 @@ protected:
     std::string _modelFileName;
     OpenSim::PropertyStr _modelFileNameProp;
     std::string _outputFileName;
+    std::string _outputDirectory;
+    // Low-pass cut-off frequency for filtering the coordinates
+    OpenSim::PropertyDbl _lowpassCutoffFrequencyProp;
+    double _lowpassCutoffFrequency;
+    int _splineDegree;
+    int _outputMaxDerOrder;
+    bool _outputDegrees;
     //double _startTime;
     //double _endTime;
     bool loadCoordinatesFromFile();

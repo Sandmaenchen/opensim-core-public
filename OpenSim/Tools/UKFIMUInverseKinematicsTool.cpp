@@ -71,8 +71,12 @@ void OpenSim::UKFThreadPool::workerThread() {
     }
 }
 
-
-
+// Struct for holding the clamped coordinate limits
+OpenSim::UKFClampedCoordLimits::UKFClampedCoordLimits(std::string name, double min, double max) {
+    stateVarName = name;
+    rangeMin = min;
+    rangeMax = max;
+}
 
 // UKFIMUInverseKinematicsTool methods
 OpenSim::UKFIMUInverseKinematicsTool::UKFIMUInverseKinematicsTool()
@@ -94,19 +98,32 @@ void OpenSim::UKFIMUInverseKinematicsTool::constructProperties()
 {
     OpenSim::UKFIMUInverseKinematicsTool::constructProperty_sensor_to_opensim_rotations(
             SimTK::Vec3(0));
+    OpenSim::UKFIMUInverseKinematicsTool::constructProperty_base_imu_label("");
+    OpenSim::UKFIMUInverseKinematicsTool::constructProperty_base_heading_axis("");
     OpenSim::UKFIMUInverseKinematicsTool::constructProperty_orientations_file("");
     OpenSim::OrientationWeightSet orientationWeights = OpenSim::OrientationWeightSet();
     OpenSim::UKFIMUInverseKinematicsTool::constructProperty_orientation_weights(orientationWeights);
+    OpenSim::UKFIMUInverseKinematicsTool::constructProperty_calibrate(false);
     OpenSim::UKFIMUInverseKinematicsTool::constructProperty_alpha(1.0);
     OpenSim::UKFIMUInverseKinematicsTool::constructProperty_beta(2.0);
     OpenSim::UKFIMUInverseKinematicsTool::constructProperty_kappa(-1.337);
-    OpenSim::UKFIMUInverseKinematicsTool::constructProperty_sgma2w(1000.0);
+    OpenSim::UKFIMUInverseKinematicsTool::constructProperty_sgma2w_min(256.0);
+    OpenSim::UKFIMUInverseKinematicsTool::constructProperty_sgma2w_max(1048576.0);
+    OpenSim::UKFIMUInverseKinematicsTool::constructProperty_sgma2w_0(1024.0);
+    OpenSim::UKFIMUInverseKinematicsTool::constructProperty_processForgetFactor(0.05);
+    OpenSim::UKFIMUInverseKinematicsTool::constructProperty_observationForgetFactor(0.0005);
     OpenSim::UKFIMUInverseKinematicsTool::constructProperty_order(2);
-    OpenSim::UKFIMUInverseKinematicsTool::constructProperty_lag_length(3);
-    OpenSim::UKFIMUInverseKinematicsTool::constructProperty_missing_data_scale(100.0);
+    OpenSim::UKFIMUInverseKinematicsTool::constructProperty_lag_length(5);
+    OpenSim::UKFIMUInverseKinematicsTool::constructProperty_num_adaptive_samples(10);
+    OpenSim::UKFIMUInverseKinematicsTool::constructProperty_missing_data_scale(1.0);
     OpenSim::UKFIMUInverseKinematicsTool::constructProperty_num_threads(3);
     OpenSim::UKFIMUInverseKinematicsTool::constructProperty_write_UKF(true);
-    OpenSim::UKFIMUInverseKinematicsTool::constructProperty_enable_resampling(true);
+    OpenSim::UKFIMUInverseKinematicsTool::constructProperty_enable_clamping(true);
+    OpenSim::UKFIMUInverseKinematicsTool::constructProperty_enforce_independent_sensors(true);
+    OpenSim::UKFIMUInverseKinematicsTool::constructProperty_enforce_white_process_noise(true);
+    OpenSim::UKFIMUInverseKinematicsTool::constructProperty_process_noise_zero(true);
+    OpenSim::UKFIMUInverseKinematicsTool::constructProperty_observation_noise_zero(false);
+    OpenSim::UKFIMUInverseKinematicsTool::constructProperty_abort_if_diverging(false);
     OpenSim::UKFIMUInverseKinematicsTool::constructProperty_process_covariance_method(0);
     OpenSim::UKFIMUInverseKinematicsTool::constructProperty_imu_RMS_in_deg(SimTK::Vec3(0));
         
@@ -221,15 +238,16 @@ void OpenSim::UKFIMUInverseKinematicsTool::runInverseKinematicsWithOrientationsF
     // Solve the states with Unscented Kalman Filter
 	//int step = 0;	
 	
-	log_info("Managed to get to UKFTool.");
+	//log_info("Managed to get to UKFTool.");
 
     // Eigen::MatrixXd meanVec;
     // Eigen::MatrixXd priorCovMatrix;
     // Eigen::MatrixXd stateCrossCovMatrix;
     // std::vector<Eigen::MatrixXd> backwardsPassElement;
-
+    
     std::mutex* fwdBwdMutex = new std::mutex();
-    std::condition_variable* condVar = new std::condition_variable();
+    std::condition_variable* condVarB = new std::condition_variable();
+    std::condition_variable* condVarQ = new std::condition_variable();
     bool* fwdDone = new bool;
     *(fwdDone) = false; // Signal when the producer is done
     std::queue<std::vector<Eigen::MatrixXd>>* priorStatsBuffer = new std::queue<std::vector<Eigen::MatrixXd>>();
@@ -267,6 +285,7 @@ void OpenSim::UKFIMUInverseKinematicsTool::runInverseKinematicsWithOrientationsF
     int iqx;
     int nqf = 0;    //number of free and clamped q's
     int nuf = 0;
+    double deltaTime = 1.0 / oRefs.getSamplingFrequency();
     for (const auto& coord : model.getComponentList<OpenSim::Coordinate>()) {
         iqx = yMapFromOpenSimToSimbody[coord.getStateVariableNames()[0]];
         if (coord.getMotionType() == OpenSim::Coordinate::MotionType::Translational) {
@@ -306,54 +325,82 @@ void OpenSim::UKFIMUInverseKinematicsTool::runInverseKinematicsWithOrientationsF
         }
     }
 
+    // Vector of structs holding value limits for clamped coordinates
+    std::vector<OpenSim::UKFClampedCoordLimits> clampedCoordLimits;
+    for (const auto& coord : model.getComponentList<OpenSim::Coordinate>()) {
+        if (coord.get_clamped()) {
+            clampedCoordLimits.emplace_back(coord.getStateVariableNames()[0], coord.getRangeMin(), coord.getRangeMax());            
+        }
+    }
+
+    // Construct covariance and mean for process noise
+    Eigen::MatrixXd Q((nqf + get_order()*nuf), (nqf + get_order()*nuf));
+    Eigen::MatrixXd w((nqf + get_order()*nuf), 1);
+    w.setZero();
+
+    Eigen::MatrixXd F((nqf + get_order()*nuf), (nqf + get_order()*nuf));
+    std::queue<std::vector<Eigen::MatrixXd>>* stateMeansBuffer = new std::queue<std::vector<Eigen::MatrixXd>>();
+    //std::mutex* qMutex = new std::mutex();
+
+    // If the process covariance scale factors are not provided, use simply ones
+    if (processCovScales.size() == 0) {
+        processCovScales = SimTK::Vector_<double>(get_order()+1, 1.0);
+        log_info("Process covariance scales not provided, using ones instead.");
+    }
+
+
+    // RMS errors for observation noise covariance    
+    SimTK::Vec3 imuRMSinDeg = get_imu_RMS_in_deg();    
+    double xAxisRMS = imuRMSinDeg(0) * (SimTK::Pi / 180); // roll RMS error (x-axis)
+    double yAxisRMS = imuRMSinDeg(1) * (SimTK::Pi / 180); // heading RMS error (y-axis)
+    double zAxisRMS = imuRMSinDeg(2) * (SimTK::Pi / 180); // pitch RMS error (z-axis)
+
+    // Construct mean vector for observation errors (gets updated)
+    Eigen::MatrixXd v(3 * ny, 1);
+    v.setZero();
+    std::vector<Eigen::Quaternion<double>> vQuat;    
+    for (int idx = 0; idx < ny; idx++) {
+        vQuat.emplace_back(Eigen::Quaternion<double>(1, 0, 0, 0));
+    }    
+
+    // Construct covariance matrix for observation errors (gets updated)
+    Eigen::MatrixXd R(3 * ny, 3 * ny);
+    R.setZero();
+
+    for (int ii = 0; ii < (3 * ny); ii++) {
+        if (ii % 3 == 0) {      //x-axis
+            R(ii, ii) = std::pow(xAxisRMS, 2);
+        } 
+		else if (ii % 3 == 1) { // y-axis
+            R(ii, ii) = std::pow(yAxisRMS, 2);
+        } 
+		else {                //z-axis
+            R(ii, ii) = std::pow(zAxisRMS, 2);        
+        }
+    }
     
     std::thread forwardThread([&] {OpenSim::UKFIMUInverseKinematicsTool::UKFTool(
-        nqf, nuf, yMapFromSimbodyToEigen, yMapFromEigenToSimbody, yMapFromSimbodyToOpenSim, oMapFromDataToModel, 
-        priorStatsBuffer, fwdBwdMutex, condVar, fwdDone, s0, oRefs, ikSolver, 
+        nqf, nuf, w, Q, v, vQuat, R, F, yMapFromSimbodyToEigen, yMapFromEigenToSimbody, yMapFromSimbodyToOpenSim, yMapFromOpenSimToSimbody, oMapFromDataToModel, clampedCoordLimits, 
+        priorStatsBuffer, fwdBwdMutex, stateMeansBuffer, condVarB, condVarQ, fwdDone, s0, oRefs, ikSolver, 
         modelOrientationErrors, visualizeResults, orientationErrors, processCovScales);});
     
-    /*
-    std::thread forwardThread(OpenSim::UKFIMUInverseKinematicsTool::UKFTool, model, nqf, nuf, yMapFromSimbodyToEigen, 
-    yMapFromEigenToSimbody, yMapFromSimbodyToOpenSim, oMapFromDataToModel, 
-    priorStatsBuffer, fwdBwdMutex, condVar, fwdDone, s0, analysisSet, oRefs, ikSolver, 
-    modelOrientationErrors, visualizeResults, writeUKF, get_reportErrors, orientationErrors, 
-    numCPUCores, order, lagLength, alpha, beta, kappa, missingDataScale, imuRMSinDeg, sgma2w, processCovScales);
-    */
     
-    std::thread backwardThread([&] {OpenSim::UKFIMUInverseKinematicsTool::computeBackwardPass(model, 
-        priorStatsBuffer,fwdBwdMutex, condVar, fwdDone, yMapFromEigenToSimbody, analysisSet, yMapFromSimbodyToOpenSim, nqf, nuf);});
+    std::thread backwardThread([&] {OpenSim::UKFIMUInverseKinematicsTool::computeBackwardPass(model, clampedCoordLimits, 
+        priorStatsBuffer,fwdBwdMutex, condVarB, fwdDone, yMapFromEigenToSimbody, yMapFromSimbodyToEigen, yMapFromOpenSimToSimbody, analysisSet, yMapFromSimbodyToOpenSim, nqf, nuf);});
     
-    /*
-    std::thread backwardThread(OpenSim::UKFIMUInverseKinematicsTool::computeBackwardPass,priorStatsBuffer, fwdBwdMutex, 
-    condVar, fwdDone, lagLength, yMapFromEigenToSimbody, yMapFromSimbodyToOpenSim, nqf, nuf, order, writeUKF);
-    */
 
     forwardThread.join();
     backwardThread.join();
+    
+    log_info("Threads finished");
 
     delete fwdBwdMutex;
-    delete condVar;
+    delete condVarB;
+    delete condVarQ;
     delete fwdDone;
     delete priorStatsBuffer;
-
-    /*
-    for (auto time : times) {
-        s0.updTime() = time;
-        ikSolver.track(s0);
-        if (get_report_errors()) {
-            ikSolver.computeCurrentOrientationErrors(orientationErrors);
-            modelOrientationErrors->appendRow(
-                    s0.getTime(), orientationErrors);
-        }
-        if (visualizeResults)  
-            model.getVisualizer().show(s0);
-        else
-            log_info("Solved at time: {} s", time);
-        // realize to report to get reporter to pull values from model
-        analysisSet.step(s0, step++);
-        model.realizeReport(s0);
-    }
-    */
+    delete stateMeansBuffer;
+    log_info("Deleted dynamically allocated stuff");
 
     auto report = ikReporter->getTable();
     // form resultsDir either from results_directory or output_motion_file
@@ -405,7 +452,28 @@ void OpenSim::UKFIMUInverseKinematicsTool::runInverseKinematicsWithOrientationsF
 bool OpenSim::UKFIMUInverseKinematicsTool::run(bool visualizeResults, SimTK::Vector_<double> processCovScales)
 {
     if (_model.empty()) {
-        _model.reset(new Model(get_model_file()));
+        _model.reset(new OpenSim::Model(get_model_file()));
+    }
+    if (get_calibrate() == true) {
+        OpenSim::IMUPlacer imuPlacer = OpenSim::IMUPlacer();
+        imuPlacer.setModel(*_model);
+        imuPlacer.set_base_imu_label(get_base_imu_label());
+        imuPlacer.set_base_heading_axis(get_base_heading_axis());
+        imuPlacer.set_sensor_to_opensim_rotations(get_sensor_to_opensim_rotations());
+        imuPlacer.set_orientation_file_for_calibration(get_orientations_file());
+        bool success = imuPlacer.run();
+        if (success) {
+            log_info("managed to calibrate");
+        }
+        else {
+            log_info("failed to calibrate");
+        }
+        log_info("trying to assign calibrated model next.");
+        //(*_model) = imuPlacer.getCalibratedModel();
+        _model.reset(new OpenSim::Model(imuPlacer.getCalibratedModel()));
+        log_info("managed to assign calibrated model.");
+        _model->finalizeFromProperties();
+        log_info("model: finalized from properties.");
     }
 
     OpenSim::UKFIMUInverseKinematicsTool::runInverseKinematicsWithOrientationsFromFile(*_model,
@@ -441,10 +509,12 @@ OpenSim::TimeSeriesTable_<SimTK::Vec3> OpenSim::UKFIMUInverseKinematicsTool::loa
 
 // The actual workhorse of UKF-IK
 //template <class T>
-void OpenSim::UKFIMUInverseKinematicsTool::UKFTool(int nqf, int nuf, std::map<int, int> yMapFromSimbodyToEigen, 
-        std::map<int, int> yMapFromEigenToSimbody, std::map<int, std::string> yMapFromSimbodyToOpenSim, std::map<int, int> oMapFromDataToModel,
-        std::queue<std::vector<Eigen::MatrixXd>>* priorStatsBuffer, 
-        std::mutex* fwdBwdMutex, std::condition_variable* condVar, bool* fwdDone, SimTK::State& s, 
+void OpenSim::UKFIMUInverseKinematicsTool::UKFTool(int nqf, int nuf, Eigen::MatrixXd& w, Eigen::MatrixXd& Q, Eigen::MatrixXd& v, 
+        std::vector<Eigen::Quaternion<double>>& vQuat, Eigen::MatrixXd& R, Eigen::MatrixXd& F, std::map<int, int> yMapFromSimbodyToEigen, 
+        std::map<int, int> yMapFromEigenToSimbody, std::map<int, std::string> yMapFromSimbodyToOpenSim, std::map<std::string, int> yMapFromOpenSimToSimbody,
+        std::map<int, int> oMapFromDataToModel, std::vector<UKFClampedCoordLimits> clampedCoordLimits, std::queue<std::vector<Eigen::MatrixXd>>* priorStatsBuffer, 
+        std::mutex* fwdBwdMutex, std::queue<std::vector<Eigen::MatrixXd>>* stateMeansBuffer, std::condition_variable* condVarB, 
+        std::condition_variable* condVarQ, bool* fwdDone, SimTK::State& s, 
         OpenSim::OrientationsReference oRefs, OpenSim::InverseKinematicsSolver& ikSolver,
         std::shared_ptr<OpenSim::TimeSeriesTable> modelOrientationErrors, bool visualizeResults,
         SimTK::Array_<double> orientationErrors, SimTK::Vector_<double> processCovScales) {
@@ -452,11 +522,6 @@ void OpenSim::UKFIMUInverseKinematicsTool::UKFTool(int nqf, int nuf, std::map<in
 	log_info("Got inside UKFTOOL");
 
     SimTK::State ss;
-    // If the process covariance scale factors are not provided, use simply ones
-    if (processCovScales.size() == 0) {
-        processCovScales = SimTK::Vector_<double>(get_order(), 1.0);
-        log_info("Process covariance scales not provided, using ones instead.");
-    }
 
     {
         std::unique_lock<std::mutex> lock(*fwdBwdMutex);
@@ -468,10 +533,10 @@ void OpenSim::UKFIMUInverseKinematicsTool::UKFTool(int nqf, int nuf, std::map<in
     double beta = get_beta();
     double kappa = get_kappa();
     int order = get_order();
-    double sgma2w = get_sgma2w();
+    double sgma2w0 = get_sgma2w_0();
     double missingDataScale = get_missing_data_scale();
 
-    SimTK::Vec3 imuRMSinDeg = get_imu_RMS_in_deg();
+    
     int num_cores = get_num_threads();
     
    
@@ -482,21 +547,11 @@ void OpenSim::UKFIMUInverseKinematicsTool::UKFTool(int nqf, int nuf, std::map<in
     SimTK::Array_<SimTK::Rotation_<double>>
             yArray; // array for observations (IMU orientations)
     //SimTK::SimbodyMatterSubsystem matterSubSys = model.getMatterSubsystem();    
-    int const ny = ikSolver.getNumOrientationSensorsInUse();    //number of sensors
-    //int const ny = oRefs.getNumRefs(); // number of osensors, maybe same as above?
-
-
+    
     int const nq = ss.getNQ(); // number of generalized positions (joint angles)
     int const nu = ss.getNU(); // number of generalized velocities (joint angular
                         // velocities)
     int const nr = std::min(nq, nu); // probably not needed, usually nq >= nu
-
-
-    // RMS errors for observation noise covariance
-    
-    double xAxisRMS = imuRMSinDeg(0) * (SimTK::Pi / 180); // roll RMS error (x-axis)
-    double yAxisRMS = imuRMSinDeg(1) * (SimTK::Pi / 180); // heading RMS error (y-axis)
-    double zAxisRMS = imuRMSinDeg(2) * (SimTK::Pi / 180); // pitch RMS error (z-axis)
 
     // Coefficients for process model f()
     double deltaTime = 1.0 / oRefs.getSamplingFrequency();
@@ -512,9 +567,12 @@ void OpenSim::UKFIMUInverseKinematicsTool::UKFTool(int nqf, int nuf, std::map<in
     // Coefficients for process noise covariance matrix Q
     Eigen::MatrixXd QCoeffs(order+1, order+1);
 
+    // Coefficients for process noise correction matrix Qw
+    Eigen::MatrixXd QwCoeffs(order+1, order+1);
+    Eigen::MatrixXd wCoeffs(order+1, 1);
     
     if (get_process_covariance_method() == 0) {
-    // classic approach of Fioretti and Jetto, 1989 (no scaling tricks by default; should use ones)    
+    // classic approach of Fioretti and Jetto, 1989 (no scaling tricks by default; should use ones)
         log_info("Using method of Fioretti and Jetto, 1989.");
         for (int irow = 0; irow <= order; irow++) {
             for (int icol = 0; icol <= order; icol++) {
@@ -524,6 +582,13 @@ void OpenSim::UKFIMUInverseKinematicsTool::UKFTool(int nqf, int nuf, std::map<in
                 QCoeffs(irow, icol) = processCovScales(irow) * processCovScales(icol) * std::pow(deltaTime, (deltaPower+1)) / (denum1 * denum2 * (deltaPower+1));
             }
         }
+        //for w
+        for (int irow = 0; irow <= order; irow++) {
+            double denum = OpenSim::UKFIMUInverseKinematicsTool::computeFactorial(order-irow);
+            int deltaPower = order+1-irow;
+            wCoeffs(irow, 0) = processCovScales(irow) * std::pow(deltaTime, deltaPower) / (denum * deltaPower);
+        }
+        QwCoeffs = wCoeffs * wCoeffs.transpose();
     }
 
     else if (get_process_covariance_method() == 1) {
@@ -541,38 +606,29 @@ void OpenSim::UKFIMUInverseKinematicsTool::UKFTool(int nqf, int nuf, std::map<in
     }
 
     // Construct covariance matrix Q for process noise
-    Eigen::MatrixXd Q((nqf + order*nuf), (nqf + order*nuf));
+    //Eigen::MatrixXd Q((nqf + order*nuf), (nqf + order*nuf));
+
     Q.setZero();
     for (int irow = 0; irow <= order; irow++) {
         for (int icol = 0; icol <= order; icol++) {
-            Q.block((irow*nuf), (icol*nuf), nuf, nuf) = sgma2w * QCoeffs(irow, icol) * Eigen::MatrixXd::Identity(nuf, nuf);
+            Q.block((irow*nuf), (icol*nuf), nuf, nuf) = sgma2w0 * QCoeffs(irow, icol) * Eigen::MatrixXd::Identity(nuf, nuf);
         }
     }
-        
-    // Construct covariance matrix for observation errors
-    Eigen::MatrixXd R(3 * ny, 3 * ny);
-    R.setZero();
-
-    for (int ii = 0; ii < (3 * ny); ii++) {
-        if (ii % 3 == 0) {      //x-axis
-            R(ii, ii) = std::pow(xAxisRMS, 2);
-        } 
-		else if (ii % 3 == 1) { // y-axis
-            R(ii, ii) = std::pow(yAxisRMS, 2);
-        } 
-		else {                //z-axis
-            R(ii, ii) = std::pow(zAxisRMS, 2);        
-        }
-    }
+    Eigen::MatrixXd Qw((nqf + order*nuf), (nqf + order*nuf));
+    
+    // Store the original observation noise covariance
+    int const ny = ikSolver.getNumOrientationSensorsInUse();
     Eigen::MatrixXd R0(3 * ny, 3 * ny);
     R0 = R;
 
     // Construct covariance matrix of state
     Eigen::MatrixXd P((nqf + (order*nuf)), (nqf + (order*nuf)));
+    Eigen::MatrixXd P0((nqf + (order*nuf)), (nqf + (order*nuf)));
     P = Q;
     
     // Construct the state vector
     Eigen::MatrixXd x((nqf + (order*nuf)), 1);
+    Eigen::MatrixXd x0((nqf + (order*nuf)), 1);
     Eigen::MatrixXd xx((nqf + (order*nuf)), 1);
     std::vector<Eigen::MatrixXd*> arr_xx;
     //SimTK::Vector_<double> x(nq + nu);
@@ -595,7 +651,7 @@ void OpenSim::UKFIMUInverseKinematicsTool::UKFTool(int nqf, int nuf, std::map<in
     }
 
     // Construct the process model matrix
-    Eigen::MatrixXd F((nqf + order*nuf), (nqf + order*nuf));
+    //Eigen::MatrixXd F((nqf + order*nuf), (nqf + order*nuf));
     F.setZero();
     for (int irow = 0; irow <= order; irow++) {
         for (int icol = 0; icol <= order; icol++) {
@@ -644,6 +700,8 @@ void OpenSim::UKFIMUInverseKinematicsTool::UKFTool(int nqf, int nuf, std::map<in
     u_oldold.setToZero();
     Eigen::MatrixXd ysave(3 * ny, 1);
     Eigen::MatrixXd ydiff(3 * ny, 1);
+    Eigen::MatrixXd ydiff0(3 * ny, 1);
+    Eigen::MatrixXd ypred(3 * ny, 1);
 
     int ycounter;
     Eigen::MatrixXd Py(3 * ny, 3 * ny);
@@ -654,6 +712,7 @@ void OpenSim::UKFIMUInverseKinematicsTool::UKFTool(int nqf, int nuf, std::map<in
     SimTK::Matrix A;        //matrix for holonomic constraints
     SimTK::Vector_<double> qerr;
 	SimTK::Vec3 angle_vector;
+    SimTK::Vec3 angle_vector0;
     std::vector<SimTK::Vec3*> arr_angle_vector;
     Eigen::LLT<Eigen::MatrixXd> llt;    //construct LLT object
 
@@ -685,26 +744,33 @@ void OpenSim::UKFIMUInverseKinematicsTool::UKFTool(int nqf, int nuf, std::map<in
     //models.reserve(num_cores);
     SimTK::Array_<OpenSim::CoordinateReference> coordRefArray;
 
-    for (int ii = 0; ii < num_cores; ii++) {
-        //OpenSim::Model* model_clone = model.clone();
-        OpenSim::Model* model_clone = new OpenSim::Model(get_model_file());
-        models.push_back(model_clone);  //Alternatively, emplace_back(), but that *should* be slower
-        models[ii]->initSystem();
-        OpenSim::InverseKinematicsSolver* aSolver = new OpenSim::InverseKinematicsSolver(*(models[ii]), nullptr,
-                std::make_shared<OpenSim::OrientationsReference>(oRefs),
-                coordRefArray);
-        aSolver->setAccuracy(1e-4);
-        aSolver->assemble(ss);
-        solvers.push_back(aSolver);     //Alternatively, emplace_back(), but that *should* be slower
-        //delete aSolver;
-        //delete model_clone;
+    {
+        std::unique_lock<std::mutex> lock(*fwdBwdMutex);
+        for (int ii = 0; ii < num_cores; ii++) {
+            //OpenSim::Model* model_clone = model.clone();
+            //OpenSim::Model* model_clone = new OpenSim::Model(get_model_file());
+            OpenSim::Model* model_clone = new OpenSim::Model(ikSolver.getModel());
+            models.push_back(model_clone);  //Alternatively, emplace_back(), but that *should* be slower
+            models[ii]->initSystem();
+            OpenSim::InverseKinematicsSolver* aSolver = new OpenSim::InverseKinematicsSolver(*(models[ii]), nullptr,
+                    std::make_shared<OpenSim::OrientationsReference>(oRefs),
+                    coordRefArray);
+            aSolver->setAccuracy(1e-4);
+            aSolver->assemble(ss);
+            solvers.push_back(aSolver);     //Alternatively, emplace_back(), but that *should* be slower
+            //delete aSolver;
+            //delete model_clone;
+        }
     }
 
+    
     // Modifications to compute average orientations, comparisons between orientations, etc.
     SimTK::Quaternion_<double> simTKquat(1, 0, 0, 0);
+    SimTK::Quaternion_<double> simTKquat0(1, 0, 0, 0);
     std::vector<SimTK::Quaternion_<double>*> arr_simTKquat;
     Eigen::Quaternion<double> dummyquat(1, 0, 0, 0);
     Eigen::Quaternion<double> dataMinusMeanQuat(1, 0, 0, 0);
+    Eigen::Quaternion<double> dataMinusMeanQuat0(1, 0, 0, 0);
     std::vector<Eigen::Quaternion<double>> dataOVector(ny, dummyquat);
     std::vector<Eigen::Quaternion<double>> expectedOVector(ny, dummyquat);
     std::vector<std::vector<Eigen::Quaternion<double>>> Sigmas2Orientations(2 * (nqf + (order*nuf)) + 1, dataOVector);
@@ -719,11 +785,15 @@ void OpenSim::UKFIMUInverseKinematicsTool::UKFTool(int nqf, int nuf, std::map<in
     std::vector<Eigen::VectorXd*> arr_eigenVals;
     Eigen::MatrixXd eigenVecs(4, 4);
     std::vector<Eigen::MatrixXd*> arr_eigenVecs;
+    Eigen::MatrixXd newSigmas(nqf, 1); newSigmas.setConstant(get_sgma2w_0());
+    Eigen::MatrixXd oldSigmas(nqf, 1); oldSigmas.setConstant(get_sgma2w_0()); 
     int iMax = 0;
-    double maxEigenVal = 0;
+    double maxEigenVal = 0.0;
     SimTK::Vec4 dummy4vector = simTKquat.asVec4();
     std::vector<SimTK::Vec4*> arr_dummy4vector;
     std::vector<std::map<int, int>*> arr_yMapFromEigenToSimbody;
+    int timeStep = 0;
+    //Eigen::MatrixXd innovationValue(1,1); innovationValue.setZero();
 
     for (int ii = 0; ii < num_cores; ii++) {
         std::map<int, int>* aMap = new std::map<int,int>(yMapFromEigenToSimbody);
@@ -758,6 +828,23 @@ void OpenSim::UKFIMUInverseKinematicsTool::UKFTool(int nqf, int nuf, std::map<in
         SimTK::Vec3* aVec3 = new SimTK::Vec3(0,0,0);
         arr_angle_vector.push_back(aVec3);
     }
+
+    // for noise updates
+    Eigen::MatrixXd new_v(3 * ny, 1); 
+    std::vector<Eigen::Quaterniond> new_vQuat(ny, dummyquat); 
+    Eigen::MatrixXd new_w((nqf + (order*nuf)), 1); new_w.setZero();
+
+    Eigen::MatrixXd z((order+1),1); z.setZero();
+    Eigen::MatrixXd H((order+1),1); H.setZero(); 
+
+    Eigen::MatrixXd newQ(nqf + (order * nuf), nqf + (order * nuf)); newQ.setZero();
+    Eigen::MatrixXd tempQ(nqf + (order * nuf), nqf + (order * nuf)); newQ.setZero();
+    Eigen::MatrixXd newR(3 * ny, 3 * ny); newR.setZero();
+    Eigen::MatrixXd tempR(3 * ny, 3 * ny); tempR.setZero();
+    Eigen::MatrixXd sigmas(nqf, 1);
+    Eigen::MatrixXd vUpdateweightMat(2,2); vUpdateweightMat.setZero();
+    vUpdateweightMat(0, 0) = (1.0 - get_observationForgetFactor());
+    vUpdateweightMat(1, 1) = (get_observationForgetFactor());
     
 	int step = 0;
 
@@ -767,12 +854,17 @@ void OpenSim::UKFIMUInverseKinematicsTool::UKFTool(int nqf, int nuf, std::map<in
     //log_info("before for loop, x(0, 0) = {}", (double)x(0, 0));
 
     for (auto time : times) { 
-        if (time == times[0]) 
-        { 
-            std::vector<Eigen::MatrixXd> priorStatsVector;
+        if (time == times[0]) { 
+            std::vector<Eigen::MatrixXd> priorStatsVector;            
             Eigen::MatrixXd time_export(1,1);
             time_export(0,0) = time;
             priorStatsVector.emplace_back(time_export);
+
+            // Apply inequality constraints (clamped coordinates)
+            if (get_enable_clamping()) {                
+                OpenSim::UKFIMUInverseKinematicsTool::clampCoordinates(x, clampedCoordLimits, yMapFromOpenSimToSimbody, yMapFromSimbodyToEigen, order, nuf);            
+            }
+            
             priorStatsVector.emplace_back(x);   // this won't be used in backward pass
             priorStatsVector.emplace_back(P);   // this won't be used in backward pass
             priorStatsVector.emplace_back(P);   // this won't be used in backward pass
@@ -782,18 +874,17 @@ void OpenSim::UKFIMUInverseKinematicsTool::UKFTool(int nqf, int nuf, std::map<in
                 std::unique_lock<std::mutex> lock(*fwdBwdMutex);
                 priorStatsBuffer->push(priorStatsVector);
             }
-            (*condVar).notify_one();
+            (*condVarB).notify_one();
+            //log_info("got through 1st frame");
+
         } 
         else {
-
+            timeStep++;
             // Step 0. Cholesky factorization of state covariance            
             ss.updTime() = time;
             ss.updQ() = q;
             ss.updU() = u;
 
-            ss.updTime() = time;
-            ss.updQ() = q;  //ss.setQ(q) failed to update some elements; is this supposed to happen?
-            ss.updU() = u;
             /*
             llt.compute((nqf + (order*nuf) + lambda) * P);
             SS = llt.matrixL();
@@ -827,36 +918,7 @@ void OpenSim::UKFIMUInverseKinematicsTool::UKFTool(int nqf, int nuf, std::map<in
                                 //xx((it->first)+(irow*nuf)) += fCoeffs(irow, icol) * x((it->first)+(icol*nuf));
                                 arr_xx[ithr]->block((irow*nuf), 0, nuf, 1) += fCoeffs(irow, icol) * Sigmas.col(ii).block((icol*nuf), 0, nuf, 1);
                             }
-                        }
-                        
-                        for (std::map<int, int>::iterator it = yMapFromEigenToSimbody.begin(); it != yMapFromEigenToSimbody.end(); ++it) {
-                            q(it->second) = x(it->first);
-                        }
-                        for (std::map<int, int>::iterator it =
-                                yMapFromEigenToSimbody.begin();
-                                it != yMapFromEigenToSimbody.end(); ++it) {
-                            u(it->second) = x((it->first)+nqf);
-                        }
-                        qdot = u;
-                        for (std::map<int, int>::iterator it = yMapFromEigenToSimbody.begin(); it != yMapFromEigenToSimbody.end(); ++it) {
-                            q(it->second) = x(it->first) + deltaTime * qdot(it->second);
-                        }
-                        for (std::map<int, int>::iterator it =
-                                yMapFromEigenToSimbody.begin();
-                                it != yMapFromEigenToSimbody.end(); ++it) {
-                            //u(it->second) = 2 * x((it->first)+nqf) - u_old(it->second);
-                            u(it->second) = x((it->first) + nqf);
-                        }
-
-                        for (std::map<int, int>::iterator it = yMapFromSimbodyToEigen.begin(); it != yMapFromSimbodyToEigen.end(); ++it) {
-                            x(it->second) = q(it->first);
-                        }
-                        for (std::map<int, int>::iterator it =
-                                yMapFromSimbodyToEigen.begin();
-                                it != yMapFromSimbodyToEigen.end(); ++it) {
-                            x((it->second)+nqf) = u(it->first);
-                        }
-                        
+                        }             
                         Sigmaprops.col(ii) = (*(arr_xx[ithr]));
                     }
                 });
@@ -893,33 +955,59 @@ void OpenSim::UKFIMUInverseKinematicsTool::UKFTool(int nqf, int nuf, std::map<in
 
             */
 
-            // Steps 0-4 for linear model with Gaussian noise
-            x = F * x;
-            C = P * F.transpose();
-            P = (F * P * F.transpose()) + Q;
+            // Copy posterior state covariance of previous step for buffer
+            /*
+            std::vector<Eigen::MatrixXd> states4Q;
+            states4Q.emplace_back(P);
+            */
+
+            // Steps 0-4 for linear model with Gaussian noise            
+            C = P * F.transpose();            
+            P0 = (F * P * (F.transpose()));
+            P = (F * P * (F.transpose())) + Q;            
+            x0 = F * x;          //a priori mean assuming zero noise
+            x = F * x + w;    //a priori mean assuming non-zero noise            
+            //log_info("completed steps 0-4");
+
+            // Apply inequality constraints (clamped coordinates)
+            if (get_enable_clamping()) {
+                OpenSim::UKFIMUInverseKinematicsTool::clampCoordinates(x, clampedCoordLimits, yMapFromOpenSimToSimbody, yMapFromSimbodyToEigen, order, nuf);     
+                OpenSim::UKFIMUInverseKinematicsTool::clampCoordinates(x0, clampedCoordLimits, yMapFromOpenSimToSimbody, yMapFromSimbodyToEigen, order, nuf);         
+            }
+            //log_info("applied constraints");
+
+            // Copy constrained a priori state mean to vector for buffer
+            //states4Q.emplace_back(x);
+            
+            //log_info("added to Q thread");
              
 
             // Note! These are computed for time step 'k', not 'k+1'. Have to handle in the backward pass
-            std::vector<Eigen::MatrixXd> priorStatsVector;
+            std::vector<Eigen::MatrixXd> priorStatsVector;              
             Eigen::MatrixXd time_export(1,1);
             time_export(0,0) = time;
             priorStatsVector.emplace_back(time_export);
             priorStatsVector.emplace_back(x);
             priorStatsVector.emplace_back(P);
-            priorStatsVector.emplace_back(C);
+            priorStatsVector.emplace_back(C);        
+            //log_info("added stuff for bwdThread");
 
             // Resample the sigma points after propagating through process model (optional)
-            // get_enable_resampling() == true
-            if (true) {
-                llt.compute((nqf + (order*nuf) + lambda) * P);
+            llt.compute((nqf + (order*nuf) + lambda) * P);
+            if (llt.info() == Eigen::Success) {
                 SS = llt.matrixL();
-                Sigmas2.col(0) = x;                
-                for (int ii = 1; ii < (nqf + (order*nuf) + 1); ii++) {
-                    Sigmas2.col(ii) = x + SS.col(ii - 1);
-                }
-                for (int ii = (nqf + (order*nuf) + 1); ii < (2 * (nqf + (order*nuf)) + 1); ii++) {
-                    Sigmas2.col(ii) = x - SS.col(ii - (nqf + (order*nuf) + 1));
-                }
+            }
+            else {
+                log_info("ABORT: state covariance matrix is NOT positive definite!");
+                log_info("Tried to Cholesky factorize the following matrix: \n{}", (nqf + (order*nuf) + lambda) * P);
+                break;
+            }
+            Sigmas2.col(0) = x;                
+            for (int ii = 1; ii < (nqf + (order*nuf) + 1); ii++) {
+                Sigmas2.col(ii) = x + SS.col(ii - 1);
+            }
+            for (int ii = (nqf + (order*nuf) + 1); ii < (2 * (nqf + (order*nuf)) + 1); ii++) {
+                Sigmas2.col(ii) = x - SS.col(ii - (nqf + (order*nuf) + 1));
             }
 
             // Step 5. Propagate a priori sigma points of current step through
@@ -948,10 +1036,11 @@ void OpenSim::UKFIMUInverseKinematicsTool::UKFTool(int nqf, int nuf, std::map<in
                             arr_ss[ithr]->updU() = (*(arr_u[ithr]));
                         }
                         solvers[ithr]->setState(*(arr_ss[ithr])); //method added to AssemblySolver (like in Kalman Smoother)
-                        models[ithr]->getMultibodySystem().realize(*(arr_ss[ithr]), SimTK::Stage::Velocity);
+                        //models[ithr]->getMultibodySystem().realize(*(arr_ss[ithr]), SimTK::Stage::Velocity);
                         //model.getMultibodySystem().realize(ss, SimTK::Stage::Velocity);
                         solvers[ithr]->computeCurrentSensorOrientations(*(arr_osensorOrientations[ithr]));
                         //ikSolver.computeCurrentSensorOrientations(osensorOrientations);                        
+                        //NOTE: We don't add the observation error to sigma points; the observation error is added when handling the innovation (ydiff)
                         for (int yy = 0; yy < ny; yy++) {
                             (*(arr_dummy4vector[ithr])) = (*(arr_osensorOrientations[ithr]))[yy].convertRotationToQuaternion().asVec4();
                             Sigmas2Orientations[ii][yy] = Eigen::Quaternion<double>((*(arr_dummy4vector[ithr]))(0), (*(arr_dummy4vector[ithr]))(1), (*(arr_dummy4vector[ithr]))(2), (*(arr_dummy4vector[ithr]))(3));
@@ -961,6 +1050,7 @@ void OpenSim::UKFIMUInverseKinematicsTool::UKFTool(int nqf, int nuf, std::map<in
                 });
             }
             pool.waitUntilCompleted();
+            //log_info("completed step 5");
 
             // Step 6. Calculate expected observation of current step
             num_cols = ny;
@@ -989,11 +1079,14 @@ void OpenSim::UKFIMUInverseKinematicsTool::UKFTool(int nqf, int nuf, std::map<in
                                 maxEigenVal = (*(arr_eigenVals[ithr]))(iMax);
                             }
                         }
-                        expectedOVector[iy] = Eigen::Quaternion<double>((*(arr_eigenVecs[ithr]))(0, iMax), (*(arr_eigenVecs[ithr]))(1, iMax), (*(arr_eigenVecs[ithr]))(2, iMax), (*(arr_eigenVecs[ithr]))(3, iMax));
+                        expectedOVector[iy] = Eigen::Quaternion<double>((*(arr_eigenVecs[ithr]))(0, iMax), 
+                        (*(arr_eigenVecs[ithr]))(1, iMax), (*(arr_eigenVecs[ithr]))(2, iMax), 
+                        (*(arr_eigenVecs[ithr]))(3, iMax));
                     }
                 });
             }
             pool.waitUntilCompleted();
+            //log_info("completed step 6");
 
             //Step 7. Subtract expected mean orientation from propagated sigma points
             num_cols = (2 * (nqf + (order*nuf)) + 1);
@@ -1005,6 +1098,7 @@ void OpenSim::UKFIMUInverseKinematicsTool::UKFTool(int nqf, int nuf, std::map<in
                 pool.enqueue([&, start, end, ithr]() mutable {
                     for (int icol = start; icol < end; icol++) {
                         for (int iy = 0; iy < ny; iy++) {
+                            //Sigmas2OminusMean[icol][iy] = (vQuat[iy] *  expectedOVector[iy]) * Sigmas2Orientations[icol][iy].conjugate();
                             Sigmas2OminusMean[icol][iy] = expectedOVector[iy] * Sigmas2Orientations[icol][iy].conjugate();
                             //Sigmas2OminusMean[icol][iy] = Sigmas2Orientations[icol][iy].conjugate() * expectedOVector[iy];
                             (*(arr_simTKquat[ithr])) = SimTK::Quaternion_<double>(
@@ -1023,9 +1117,14 @@ void OpenSim::UKFIMUInverseKinematicsTool::UKFTool(int nqf, int nuf, std::map<in
                 });
             }
             pool.waitUntilCompleted();
+            //log_info("completed step 7");
 
             // Step 8. Subtract expected mean orientation from data
-            R = R0; //restore covariance of observations; gets modified if missing data
+            // NOTE: We handle the observation error mean here; thus two different innovation terms ydiff and ydiff0
+
+            if ((missingDataScale - 1.0) > std::pow(10.0, -4.0) && get_observationForgetFactor() > std::pow(10.0, -4.0)) {
+                R = R0; //restore covariance of observations; gets modified if missing data
+            }            
 
             oRefs.getValuesAtTime(time, yArray);
             for (std::map<int, int>::iterator it = oMapFromDataToModel.begin();
@@ -1045,6 +1144,7 @@ void OpenSim::UKFIMUInverseKinematicsTool::UKFTool(int nqf, int nuf, std::map<in
                         dataOVector[iy].y() == 0 && dataOVector[iy].z() == 0) {
                     for (int kk = 0; kk < 3; kk++) {
                         ydiff(iy * 3 + kk) = 0.0;
+                        ydiff0(iy * 3 + kk) = 0.0;
                         R(iy * 3 + kk, iy * 3 + kk) *= missingDataScale;
                     }
                 } 
@@ -1054,35 +1154,43 @@ void OpenSim::UKFIMUInverseKinematicsTool::UKFTool(int nqf, int nuf, std::map<in
                            std::isnan(dataOVector[iy].z())) {
                     for (int kk = 0; kk < 3; kk++) {
                         ydiff(iy * 3 + kk) = 0.0;
+                        ydiff0(iy * 3 + kk) = 0.0;
                         R(iy * 3 + kk, iy * 3 + kk) *= missingDataScale;
                     }                    
                 }
                 else {
-                    dataMinusMeanQuat =
-                            expectedOVector[iy] * dataOVector[iy].conjugate();
+                    dataMinusMeanQuat = (vQuat[iy] *
+                            expectedOVector[iy]) * dataOVector[iy].conjugate();
+                    dataMinusMeanQuat0 = expectedOVector[iy] * dataOVector[iy].conjugate();
                     // dataMinusMeanQuat = dataOVector[iy].conjugate() *
                     // expectedOVector[iy];
                     simTKquat = SimTK::Quaternion_<double>(
                             dataMinusMeanQuat.w(), dataMinusMeanQuat.x(),
                             dataMinusMeanQuat.y(), dataMinusMeanQuat.z());
-                    angle_vector =
-                            SimTK::Rotation_<double>(simTKquat)
-                                    .convertThreeAxesRotationToThreeAngles(
-                                            SimTK::BodyOrSpaceType::
-                                                    SpaceRotationSequence,
-                                            SimTK::XAxis, SimTK::YAxis,
-                                            SimTK::ZAxis);
+                    simTKquat0 = SimTK::Quaternion_<double>(
+                            dataMinusMeanQuat0.w(), dataMinusMeanQuat0.x(),
+                            dataMinusMeanQuat0.y(), dataMinusMeanQuat0.z());
+                    angle_vector = SimTK::Rotation_<double>(simTKquat).convertThreeAxesRotationToThreeAngles(
+                        SimTK::BodyOrSpaceType::SpaceRotationSequence,
+                        SimTK::XAxis, SimTK::YAxis, SimTK::ZAxis);
+                    angle_vector0 = SimTK::Rotation_<double>(simTKquat0).convertThreeAxesRotationToThreeAngles(
+                        SimTK::BodyOrSpaceType::SpaceRotationSequence,
+                        SimTK::XAxis, SimTK::YAxis, SimTK::ZAxis);
                     for (int kk = 0; kk < 3; kk++) {
                         ydiff(iy * 3 + kk) = (double)angle_vector(kk);
+                        ydiff0(iy * 3 + kk) = (double)angle_vector0(kk);
                     }
                 }
             }
+            //log_info("completed step 8");
 
             // Step 9. Calculate covariance of expected orientations
+            
             Py = R + W0c * (Sigmas2props.col(0) * Sigmas2props.col(0).transpose());
             for (int ii = 1; ii < (2 * (nqf + (order*nuf)) + 1); ii++) {
                 Py += Wi * (Sigmas2props.col(ii) * Sigmas2props.col(ii).transpose());
             }
+            //log_info("completed step 9");
 			
             // Step 10. Calculate cross-covariance of expected orientations and a
             // priori state mean
@@ -1093,6 +1201,7 @@ void OpenSim::UKFIMUInverseKinematicsTool::UKFTool(int nqf, int nuf, std::map<in
             for (int ii = 1; ii < (2 * (nqf + (order*nuf)) + 1); ii++) {
                 Pxy += Wi * (Sigmas2.col(ii) * Sigmas2props.col(ii).transpose());
             }
+            //log_info("completed step 10");
 			
             // Step 11. Calculate Kalman gain
             //K = Pxy * Py.inverse();
@@ -1100,11 +1209,196 @@ void OpenSim::UKFIMUInverseKinematicsTool::UKFTool(int nqf, int nuf, std::map<in
 			
             // Step 12. Calculate a posteriori state mean of current step
             x = xsave + K * ydiff;
-            log_info("absolute difference in data, maxCoeff = {}", (double)ydiff.cwiseAbs().maxCoeff());
+            log_info("absolute difference in data, maxCoeff = {}", (double)ydiff0.cwiseAbs().maxCoeff());
             //log_info("difference in data, minCoeff = {}", (double)ydiff.minCoeff());
-            log_info("absolute difference in data, mean = {}", (double)ydiff.cwiseAbs().mean());
+            log_info("absolute difference in data, mean = {}", (double)ydiff0.cwiseAbs().mean());
             // Step 12. Calculate a posteriori state covariance of current step
             P -= K * Py * K.transpose();
+            //log_info("calculated P");
+
+            // Apply inequality constraints (clamped coordinates)
+            if (get_enable_clamping()) {
+                OpenSim::UKFIMUInverseKinematicsTool::clampCoordinates(x, clampedCoordLimits, yMapFromOpenSimToSimbody, yMapFromSimbodyToEigen, order, nuf); 
+            }
+
+            /*
+            std::vector<Eigen::Quaternion<double>> innovationQuat;
+            Eigen::MatrixXd innovation(3 * ny, 1); innovation.setZero();
+            for (int iy = 0; iy < ny; iy++) {
+                innovationQuat.emplace_back((vQuat[iy] * Sigmas2Orientations[0][iy]) * dataOVector[iy].conjugate());
+                SimTK::Quaternion_<double> sdf = SimTK::Quaternion_<double>(innovationQuat[iy].w(), innovationQuat[iy].x(), 
+                innovationQuat[iy].y(), innovationQuat[iy].z());
+                SimTK::Rotation dfg = SimTK::Rotation(sdf);
+                SimTK::Vec3 fgh = dfg.convertThreeAxesRotationToThreeAngles(SimTK::BodyOrSpaceType::SpaceRotationSequence, 
+                SimTK::XAxis, SimTK::YAxis, SimTK::ZAxis);
+                innovation(iy*3 + 0, 0) = fgh(0);
+                innovation(iy*3 + 1, 0) = fgh(1);
+                innovation(iy*3 + 2, 0) = fgh(2);
+            }
+            */
+            //log_info("calculated innovation");
+
+            // Step 13. Update noise means and covariances
+            new_v = ydiff0;              
+            new_w = x - x0; 
+            z.setZero();
+            H.setZero(); 
+
+            //update noise covariances
+            newQ.setZero();
+            tempQ = (x - x0 - w) * (x - x0 - w).transpose(); // NOTE: we must use the old mean w here
+            newR.setZero();
+            
+            //NOTE: we must use the old observation noise mean v here
+            /*
+            std::vector<Eigen::Quaternion<double>> oNoiseWOvQuat;
+            for (int iy = 0; iy < ny; iy++) {           
+                auto asd = SimTK::Quaternion_<double>(SimTK::Rotation(SimTK::BodyOrSpaceType::SpaceRotationSequence, 
+                ydiff(iy*3+0), SimTK::XAxis, ydiff(iy*3+1), SimTK::YAxis, ydiff(iy*3+2), SimTK::ZAxis));                
+                asd.normalize(); 
+                auto sad = Eigen::Quaternion<double>(asd(0), asd(1), asd(2), asd(3));
+                oNoiseWOvQuat.emplace_back(vQuat[iy] * sad.conjugate());
+            }
+
+            Eigen::MatrixXd oNoiseWOv(3 * ny, 1); oNoiseWOv.setZero();
+            for (int iy = 0; iy < ny; iy++) {
+                simTKquat = SimTK::Quaternion_<double>(
+                    oNoiseWOvQuat[iy].w(), oNoiseWOvQuat[iy].x(),
+                    oNoiseWOvQuat[iy].y(), oNoiseWOvQuat[iy].z());                
+                angle_vector = SimTK::Rotation_<double>(simTKquat).convertThreeAxesRotationToThreeAngles(
+                    SimTK::BodyOrSpaceType::SpaceRotationSequence,
+                    SimTK::XAxis, SimTK::YAxis, SimTK::ZAxis);                
+                for (int kk = 0; kk < 3; kk++) {
+                    oNoiseWOv(iy * 3 + kk, 0) = (double)angle_vector(kk);
+                }
+            }           
+            Eigen::MatrixXd tempR = oNoiseWOv * oNoiseWOv.transpose();
+            */
+
+            tempR = ydiff * ydiff.transpose();
+            
+            if (get_enforce_independent_sensors() == true) {
+                for (int irow = 0; irow < ny; irow++) {
+                    newR.block(irow*3, irow*3, 3, 3) = tempR.block(irow*3, irow*3, 3, 3);
+                }
+            }
+            else {
+                newR = tempR;
+            }
+
+            R = (1.0 - get_observationForgetFactor()) * R + get_observationForgetFactor() * (newR);
+            
+            //log_info("calculated newR");
+
+            if (get_enforce_white_process_noise() == true) {
+                for (int idx = 0; idx < (order+1); idx++) {
+                    H(idx) = QCoeffs(idx, idx);
+                }
+                for (int cidx = 0; cidx < nqf; cidx++) {
+                    for (int oidx = 0; oidx < (order+1); oidx++) {
+                        z(oidx) = tempQ(cidx + oidx*nuf, cidx + oidx*nuf);
+                    }
+                    //sigmas(cidx, 0) = std::max(std::abs((H.transpose() * H).ldlt().solve(H.transpose() * z)(0,0)), get_sgma2w_min());
+                    //sigmas(cidx, 0) = std::max((z(order, 0) / H(order, 0)), get_sgma2w_min());
+                    //newSigmas(cidx, 0) = (1.0 - get_processForgetFactor()) * oldSigmas(cidx, 0) + get_processForgetFactor() * sigmas(cidx, 0);
+                    sigmas(cidx, 0) = (z(order, 0) / H(order, 0));
+                    newSigmas(cidx, 0) = std::min(std::max(((1.0 - get_processForgetFactor()) * oldSigmas(cidx, 0) + 
+                    get_processForgetFactor() * sigmas(cidx, 0)), get_sgma2w_min()), get_sgma2w_max());
+                }
+                //log_info("calculated sigmas");
+
+                //newSigmas = (1.0 - get_processForgetFactor()) * oldSigmas + get_processForgetFactor() * sigmas;
+
+                log_info("new process noise variances, minCoeff = {}", (double)newSigmas.cwiseAbs().minCoeff());
+                log_info("new process noise variances, maxCoeff = {}", (double)newSigmas.cwiseAbs().maxCoeff());
+                log_info("new process noise variances, mean = {}", (double)newSigmas.cwiseAbs().mean());
+
+                for (int cidx = 0; cidx < nqf; cidx++) {
+                    for (int colidx = 0; colidx < (order+1); colidx++) {
+                        for (int rowidx = 0; rowidx < (order+1); rowidx++) {
+                            newQ(((rowidx*nuf) + cidx), ((colidx*nuf) + cidx)) = QCoeffs(rowidx, colidx) * newSigmas(cidx, 0);
+                        } 
+                    }                    
+                }
+                oldSigmas = newSigmas;
+                Q = newQ;
+            }
+            else {
+                Q = (1.0 - get_processForgetFactor()) * Q + get_processForgetFactor() * (tempQ);
+            }
+
+            if (get_observation_noise_zero() == false) {
+                for (int iy = 0; iy < ny; iy++) {           
+                    auto asd = SimTK::Quaternion_<double>(SimTK::Rotation(SimTK::BodyOrSpaceType::SpaceRotationSequence, 
+                    (new_v)(iy*3+0), SimTK::XAxis, (new_v)(iy*3+1), SimTK::YAxis, (new_v)(iy*3+2), SimTK::ZAxis));    
+                    asd = asd.normalize(); 
+                    new_vQuat[iy] = Eigen::Quaternion<double>(asd(0), asd(1), asd(2), asd(3));
+                    //new_vQuat.emplace_back(Eigen::Quaternion<double>(asd(0), asd(1), asd(2), asd(3)));
+                }
+                Eigen::MatrixXd MMM(4,2);
+                for (int iy = 0; iy < ny; iy++) {
+                    MMM(0,0) = vQuat[iy].w();
+                    MMM(1,0) = vQuat[iy].x();
+                    MMM(2,0) = vQuat[iy].y();
+                    MMM(3,0) = vQuat[iy].z();
+                    MMM(0,1) = new_vQuat[iy].w();
+                    MMM(1,1) = new_vQuat[iy].x();
+                    MMM(2,1) = new_vQuat[iy].y();
+                    MMM(3,1) = new_vQuat[iy].z();                    
+                    eigSolver.compute(MMM * vUpdateweightMat * MMM.transpose(), true);
+                    auto eigVals = eigSolver.eigenvalues().real();
+                    auto eigVecs = eigSolver.eigenvectors().real();
+                    iMax = 0;
+                    maxEigenVal = eigVals(iMax);
+                    for (int ii = 0; ii < 4; ii++) {
+                        if (eigVals(ii) > maxEigenVal) {
+                            iMax = ii;
+                            maxEigenVal = eigVals(iMax);
+                        }
+                    }
+                    // the v quaternion form gets updated here
+                    vQuat[iy] = Eigen::Quaternion<double>(eigVecs(0, iMax), 
+                    eigVecs(1, iMax), eigVecs(2, iMax), eigVecs(3, iMax));
+                    vQuat[iy].normalize(); //just ensure it's of unit length...
+                }
+            }
+
+            /*
+            if (get_observation_noise_zero() == false) {
+                (v) = (1.0 - get_observationForgetFactor()) * (v) + get_observationForgetFactor() * new_v;
+                for (int iy = 0; iy < ny; iy++) {           
+                    auto asd = SimTK::Quaternion_<double>(SimTK::Rotation(SimTK::BodyOrSpaceType::SpaceRotationSequence, 
+                    (v)(iy*3+0), SimTK::XAxis, (v)(iy*3+1), SimTK::YAxis, (v)(iy*3+2), SimTK::ZAxis));    
+                    asd.normalize(); 
+                    vQuat[iy] = Eigen::Quaternion<double>(asd(0), asd(1), asd(2), asd(3));
+                }
+                log_info("new observation noise mean, minCoeff = {}", (double)(v).minCoeff());
+                log_info("new observation noise mean, maxCoeff = {}", (double)(v).maxCoeff());
+                log_info("new observation noise mean, mean = {}", (double)(v).mean());
+            }    
+            */        
+
+            if (get_process_noise_zero() == false) {
+                w = (1.0 - get_processForgetFactor()) * w + get_processForgetFactor() * (new_w);
+                log_info("new process noise mean, minCoeff = {}", (double)(w).minCoeff());
+                log_info("new process noise mean, maxCoeff = {}", (double)(w).maxCoeff());
+                log_info("new process noise mean, mean = {}", (double)(w).mean());
+            } 
+                        
+            // Send the constrained a posteriori state to buffer
+            /*
+            states4Q.emplace_back(x);
+            //states4Q.emplace_back(P);
+            //states4Q.emplace_back(innovationValue);
+            states4Q.emplace_back(Pxy);
+            states4Q.emplace_back(ydiff);
+            {
+                std::unique_lock<std::mutex> lock(*qMutex);
+                stateMeansBuffer->push(states4Q);
+            }            
+            condVarQ->notify_one();
+            */
+
 
             priorStatsVector.emplace_back(x);
             priorStatsVector.emplace_back(P);  
@@ -1112,82 +1406,29 @@ void OpenSim::UKFIMUInverseKinematicsTool::UKFTool(int nqf, int nuf, std::map<in
                 std::unique_lock<std::mutex> lock(*fwdBwdMutex);
                 priorStatsBuffer->push(priorStatsVector);
             }
-            (*condVar).notify_one();
+            condVarB->notify_one();
 
-            /*
-            // Step 12b. Update Kalman gain to satisfy position constraints (nope)
-            for (std::map<int, int>::iterator it = yMapFromEigenToSimbody.begin(); it != yMapFromEigenToSimbody.end(); ++it) {
-                q(it->second) = x(it->first);
-            }
-            for (std::map<int, int>::iterator it =
-                            yMapFromEigenToSimbody.begin();
-                    it != yMapFromEigenToSimbody.end(); ++it) {
-                u(it->second) = x((it->first)+nqf);
-            }
-            ss.updQ() = q;
-            ss.updU() = u;
-
-            //try {
-            //	model.getMatterSubsystem().calcPq(ss, A);
-            //	//NOTE: only holonomic constraints!!! FIX
-            //	throw 66;
-            //}
-            //catch (int myNum) {
-            //	log_info("No holonomic constraints found, no projection made.");
-   //             s.updQ() = q;
-   //             s.updU() = u;
-            //}
-   //         try {
-   //             qerr = A * q;
-   //             q -= (~A * (A * ~A).invert()) * qerr;
-   //             s.updQ() = q;
-   //             s.updU() = u;
-   //             throw 67;
-   //         }
-   //         catch (int myNum2) {
-   //             log_info("Could not project to constraint manifold.");
-   //             s.updQ() = q;
-   //             s.updU() = u;
-   //         }
-            s.updQ() = q;
-            s.updU() = u;
-            ikSolver.setState(s);
-            */
-			//model.getMultibodySystem().realize(s, SimTK::Stage::Velocity);
-			//log_info("Managed to set q and u for state.");
         }
-
-
-		/*
-        if (get_report_errors()) {
-            ikSolver.computeCurrentOrientationErrors(orientationErrors);
-            modelOrientationErrors->appendRow(
-                    s.getTime(), orientationErrors);
-        }
-        if (visualizeResults) {
-            model.getVisualizer().show(s);
-            log_info("Solved at time: {} s", time);
-		}
-        else {
-            log_info("Solved at time: {} s", time);
-		}
-        // realize to report to get reporter to pull values from model
-        analysisSet.step(s, step++);
-        model.realizeReport(s);
-        */
 
         // Abort running inverse kinematics in case of significant numerical instabilities
-        if ((double)ydiff.cwiseAbs().mean() > 0.75) {
-            log_info("Significant numerical instabilities encountered, aborting...");
-            break;
+        if (get_abort_if_diverging() == true) {
+            if ((double)ydiff0.cwiseAbs().mean() > 1.0) {
+                log_info("Significant numerical instabilities encountered, aborting...");
+                break;
+            }
+            else if ((double)ydiff0.cwiseAbs().maxCoeff() > 3.0) {
+                log_info("Significant numerical instabilities encountered, aborting...");
+                break;
+            }
         }
     }	//end of for
 
     {
-        std::unique_lock<std::mutex> lock(*fwdBwdMutex);
+        std::unique_lock<std::mutex> lock1(*fwdBwdMutex);
         *(fwdDone) = true;
     }
-    condVar->notify_all();
+    condVarB->notify_all();
+    //condVarQ->notify_all();    
 
     // Delete dynamically allocated stuff
     OpenSim::UKFIMUInverseKinematicsTool::deletePointers(solvers);
@@ -1211,44 +1452,8 @@ void OpenSim::UKFIMUInverseKinematicsTool::UKFTool(int nqf, int nuf, std::map<in
 	log_info("Got out of for loop and end of UKFTool.");
 	
 
-}  //end of IMUInverseKinematicsTool::UKFTool
+}  //end of UKFIMUInverseKinematicsTool::UKFTool
 
-/*
-std::tuple<std::map<std::string, int>, std::map<int, std::string>> OpenSim::UKFIMUInverseKinematicsTool::CreateYMaps(OpenSim::Model model) {
-    model.initSystem();
-    SimTK::State ss = model.getWorkingState();
-    SimTK::Array_<std::string> modelStateVariableNames = model.getCoordinateNamesInMultibodyTreeOrder();
-    //OpenSim::Array<std::string> modelStateVariableNames = model.getStateVariableNames();
-    int numQ = model.getNumCoordinates();
-    //int numY = model.getNumStateVariables();
-    ss.updY() = 0;
-    std::map<std::string, int> yMapFromOpenSimToSimbody;
-    std::map<int, std::string> yMapFromSimbodyToOpenSim;
-    //SimTK::Vector modelStateVariableValues;
-    for (int iy = 0; iy < numQ; iy++) { //this y-index runs for Simbody
-        ss.updY()[iy] = SimTK::NaN;
-        auto modelStateVariables = model.getCoordinatesInMultibodyTreeOrder();
-        for (int ii = 0; ii < (int) modelStateVariableNames.size(); ii++) {   //this index runs for OpenSim
-            if (SimTK::isNaN(modelStateVariables[ii]->getStateVariableValues(ss)[0])) {
-                yMapFromOpenSimToSimbody.insert(std::pair<std::string, int>(modelStateVariableNames[ii], iy));
-                yMapFromSimbodyToOpenSim.insert(std::pair<int, std::string>(iy, modelStateVariableNames[ii]));
-                ss.updY()[iy] = 0;
-                break;
-            }
-        }
-        if (SimTK::isNaN(ss.updY()[iy])) {
-            // If we reach here, this is an unused slot for a quaternion (from Antoine Felisse code)
-            ss.updY()[iy] = 0;
-        }
-    }
-    std::tuple<std::map<std::string, int>, std::map<int, std::string>> mappings(yMapFromOpenSimToSimbody, yMapFromSimbodyToOpenSim);
-    if (numQ != (int)yMapFromOpenSimToSimbody.size()) {
-        log_info("There were {} state variables, but got {} mappings from OpenSim to Simbody!", numQ,
-                (int)yMapFromOpenSimToSimbody.size());
-    }
-    return mappings;
-}
-*/
 
 std::tuple<std::map<std::string, int>, std::map<int, std::string>> OpenSim::UKFIMUInverseKinematicsTool::CreateYMaps(OpenSim::Model model) {
 	model.initSystem();
@@ -1281,7 +1486,8 @@ std::tuple<std::map<std::string, int>, std::map<int, std::string>> OpenSim::UKFI
             (int)yMapFromOpenSimToSimbody.size());
     }
     return mappings;
-}
+
+}   //end of UKFIMUInverseKinematicsTool::CreateYMaps
 
 
 double OpenSim::UKFIMUInverseKinematicsTool::computeFactorial(int input) {
@@ -1290,6 +1496,10 @@ double OpenSim::UKFIMUInverseKinematicsTool::computeFactorial(int input) {
         fact *= ii;
     }
     return fact;
+}
+
+double OpenSim::UKFIMUInverseKinematicsTool::probWithinInterval(double x1, double x2) {
+    return (std::erf(x2 / std::sqrt(2)) - std::erf(x1 / std::sqrt(2))) / 2;
 }
 
 template <typename T>
@@ -1301,16 +1511,19 @@ void OpenSim::UKFIMUInverseKinematicsTool::deletePointers(std::vector<T*>& vec) 
 }
 
 //template <class T>
-void OpenSim::UKFIMUInverseKinematicsTool::computeBackwardPass(OpenSim::Model& model, std::queue<std::vector<Eigen::MatrixXd>>* priorStatsBuffer, 
-    std::mutex* fwdBwdMutex, std::condition_variable* condVar, bool* fwdDone, std::map<int, int> yMapFromEigenToSimbody, 
+void OpenSim::UKFIMUInverseKinematicsTool::computeBackwardPass(OpenSim::Model& model, std::vector<OpenSim::UKFClampedCoordLimits> clampedCoordLimits, 
+    std::queue<std::vector<Eigen::MatrixXd>>* priorStatsBuffer, std::mutex* fwdBwdMutex, std::condition_variable* condVar, bool* fwdDone, 
+    std::map<int, int> yMapFromEigenToSimbody, std::map<int, int> yMapFromSimbodyToEigen, std::map<std::string, int> yMapFromOpenSimToSimbody, 
     OpenSim::AnalysisSet& analysisSet, std::map<int, std::string> yMapFromSimbodyToOpenSim, int nqf, int nuf) {
 
     SimTK::State ss;
+    //log_info("bwd: managed to get in bwdThread");
 
     {
         std::unique_lock<std::mutex> lock(*fwdBwdMutex);
         ss = SimTK::State(model.getWorkingState());
     }
+    //log_info("bwd: managed to get state");
     
     SimTK::Vector q = ss.getQ();
     SimTK::Vector u = ss.getU();
@@ -1406,8 +1619,9 @@ void OpenSim::UKFIMUInverseKinematicsTool::computeBackwardPass(OpenSim::Model& m
     filePudot << std::endl;
 
     while (true) {
+        //log_info("bwd: start of loop");
         std::unique_lock<std::mutex> lock(*fwdBwdMutex);
-        (*condVar).wait(lock, [&](){ return !(priorStatsBuffer->empty()) || (*fwdDone); });
+        condVar->wait(lock, [&](){ return !(priorStatsBuffer->empty()) || (*fwdDone); });
 
         if (!priorStatsBuffer->empty()) {
             bwdPriorStats = priorStatsBuffer->front();
@@ -1421,7 +1635,19 @@ void OpenSim::UKFIMUInverseKinematicsTool::computeBackwardPass(OpenSim::Model& m
             currentPosteriorAutoCovs.push_back(bwdPriorStats[5]);
         }
 
-        if ((int)currentPriorMeans.size() >= (lagLength+2)) {
+        if (lagLength < 0 && (int)currentPriorMeans.size() >= 1) {
+            smoothPosteriorMean = currentPosteriorMeans.at(0);
+            smoothPosteriorCov = currentPosteriorAutoCovs.at(0);
+            time = currentTimes.at(0)(0,0);
+            currentTimes.pop_front();
+            currentPriorMeans.pop_front();
+            currentPriorAutoCovs.pop_front();
+            previousCrossCovs.pop_front();
+            currentPosteriorMeans.pop_front();
+            currentPosteriorAutoCovs.pop_front();
+            writeToFile = true;
+        }
+        else if (lagLength >= 0 && (int)currentPriorMeans.size() >= (lagLength+2)) {
             if (lagLength < 0) {
                 smoothPosteriorMean = currentPosteriorMeans.at(0);
                 smoothPosteriorCov = currentPosteriorAutoCovs.at(0);
@@ -1432,10 +1658,16 @@ void OpenSim::UKFIMUInverseKinematicsTool::computeBackwardPass(OpenSim::Model& m
                     D = previousCrossCovs.at(ii+1) * (currentPriorAutoCovs.at(ii+1).completeOrthogonalDecomposition().pseudoInverse());                    
                     if (ii == lagLength) {
                         smoothPosteriorMean = currentPosteriorMeans.at(ii) + D * (currentPosteriorMeans.at(ii+1) - currentPriorMeans.at(ii+1));
+                        if (get_enable_clamping()) {
+                            OpenSim::UKFIMUInverseKinematicsTool::clampCoordinates(smoothPosteriorMean, clampedCoordLimits, yMapFromOpenSimToSimbody, yMapFromSimbodyToEigen, order, nuf);
+                        }
                         smoothPosteriorCov = currentPosteriorAutoCovs.at(ii) + D * (currentPosteriorAutoCovs.at(ii+1) - currentPriorAutoCovs.at(ii+1)) * D.transpose(); 
                     }
                     else if (ii < lagLength) {
                         smoothPosteriorMean = currentPosteriorMeans.at(ii) + D * (smoothPosteriorMean - currentPriorMeans.at(ii+1));
+                        if (get_enable_clamping()) {
+                            OpenSim::UKFIMUInverseKinematicsTool::clampCoordinates(smoothPosteriorMean, clampedCoordLimits, yMapFromOpenSimToSimbody, yMapFromSimbodyToEigen, order, nuf);
+                        }
                         smoothPosteriorCov = currentPosteriorAutoCovs.at(ii) + D * (smoothPosteriorCov - currentPriorAutoCovs.at(ii+1)) * D.transpose(); 
                     }                    
                 }
@@ -1450,7 +1682,7 @@ void OpenSim::UKFIMUInverseKinematicsTool::computeBackwardPass(OpenSim::Model& m
             currentPosteriorAutoCovs.pop_front();
         }
         else if ((*fwdDone)) {
-            if (lagLength < 0) {
+            if (lagLength < 0 && (int)currentPriorMeans.size() >= 1) {
                 time = currentTimes.at(0)(0,0);
                 smoothPosteriorMean = currentPosteriorMeans.at(0);
                 smoothPosteriorCov = currentPosteriorAutoCovs.at(0);
@@ -1463,10 +1695,16 @@ void OpenSim::UKFIMUInverseKinematicsTool::computeBackwardPass(OpenSim::Model& m
                         D = previousCrossCovs.at(ii+1) * (currentPriorAutoCovs.at(ii+1).completeOrthogonalDecomposition().pseudoInverse());                        
                         if (ii == (((int)currentPriorMeans.size())-2)) {
                             smoothPosteriorMean = currentPosteriorMeans.at(ii) + D * (currentPosteriorMeans.at(ii+1) - currentPriorMeans.at(ii+1));
+                            if (get_enable_clamping()) {
+                                OpenSim::UKFIMUInverseKinematicsTool::clampCoordinates(smoothPosteriorMean, clampedCoordLimits, yMapFromOpenSimToSimbody, yMapFromSimbodyToEigen, order, nuf);
+                            }
                             smoothPosteriorCov = currentPosteriorAutoCovs.at(ii) + D * (currentPosteriorAutoCovs.at(ii+1) - currentPriorAutoCovs.at(ii+1)) * D.transpose(); 
                         }
                         else if (ii < (((int)currentPriorMeans.size())-2)) {
                             smoothPosteriorMean = currentPosteriorMeans.at(ii) + D * (smoothPosteriorMean - currentPriorMeans.at(ii+1));
+                            if (get_enable_clamping()) {
+                                OpenSim::UKFIMUInverseKinematicsTool::clampCoordinates(smoothPosteriorMean, clampedCoordLimits, yMapFromOpenSimToSimbody, yMapFromSimbodyToEigen, order, nuf);
+                            }
                             smoothPosteriorCov = currentPosteriorAutoCovs.at(ii) + D * (smoothPosteriorCov - currentPriorAutoCovs.at(ii+1)) * D.transpose(); 
                         }
                     }
@@ -1497,8 +1735,13 @@ void OpenSim::UKFIMUInverseKinematicsTool::computeBackwardPass(OpenSim::Model& m
                 currentPosteriorAutoCovs.pop_front();
             }
         }
+        
         // Send results to the reporter
         if (writeToFile) {
+            // Constrain the smoothed mean
+            if (get_enable_clamping()) {
+                OpenSim::UKFIMUInverseKinematicsTool::clampCoordinates(smoothPosteriorMean, clampedCoordLimits, yMapFromOpenSimToSimbody, yMapFromSimbodyToEigen, order, nuf);
+            }
             for (std::map<int, int>::iterator it = yMapFromEigenToSimbody.begin(); it != yMapFromEigenToSimbody.end(); ++it) {
                 q(it->second) = smoothPosteriorMean(it->first);
             }
@@ -1597,8 +1840,28 @@ void OpenSim::UKFIMUInverseKinematicsTool::computeBackwardPass(OpenSim::Model& m
                 filePq << std::endl;
             }
         }
-    } 
+    }   // end of while(true)
+}   //end of UKFIMUInverseKinematicsTool::computeBackwardPass
+
+
+void OpenSim::UKFIMUInverseKinematicsTool::clampCoordinates(Eigen::MatrixXd& stateMeans, std::vector<OpenSim::UKFClampedCoordLimits> clampedCoordLimits, 
+std::map<std::string, int> yMapFromOpenSimToSimbody, std::map<int, int> yMapFromSimbodyToEigen, int order, int nuf) {
+    for (auto coord : clampedCoordLimits) {
+        if (stateMeans(yMapFromSimbodyToEigen[yMapFromOpenSimToSimbody[coord.stateVarName]]) > coord.rangeMax) {
+            stateMeans(yMapFromSimbodyToEigen[yMapFromOpenSimToSimbody[coord.stateVarName]]) = coord.rangeMax;
+            for (int ordidx = 1; ordidx <= order; ordidx++) {
+                if (stateMeans((ordidx * nuf) + yMapFromSimbodyToEigen[yMapFromOpenSimToSimbody[coord.stateVarName]]) > 0.0) {
+                    stateMeans((ordidx * nuf) + yMapFromSimbodyToEigen[yMapFromOpenSimToSimbody[coord.stateVarName]]) = 0.0;
+                }
+            }
+        }
+        else if (stateMeans(yMapFromSimbodyToEigen[yMapFromOpenSimToSimbody[coord.stateVarName]]) < coord.rangeMin) {
+            stateMeans(yMapFromSimbodyToEigen[yMapFromOpenSimToSimbody[coord.stateVarName]]) = coord.rangeMin;
+            for (int ordidx = 1; ordidx <= order; ordidx++) {
+                if (stateMeans((ordidx * nuf) + yMapFromSimbodyToEigen[yMapFromOpenSimToSimbody[coord.stateVarName]]) < 0.0) {
+                    stateMeans((ordidx * nuf) + yMapFromSimbodyToEigen[yMapFromOpenSimToSimbody[coord.stateVarName]]) = 0.0;
+                }
+            }
+        }
+    }
 }
-
-
-

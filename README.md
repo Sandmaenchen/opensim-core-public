@@ -77,6 +77,8 @@ The following is a template for Python script that creates an object from our UK
 ~~~~
 import opensim as osim
 ukfIK = osim.UKFIMUInverseKinematicsTool()
+ukfIK.set_calibrate(False)				# whether to recalibrate the model using 1st data frame
+ukfIK.set_abort_if_diverging(False)		# abort the run if solution diverges
 ukfIK.set_model_file(modelFileName)
 ukfIK.set_orientations_file(orientationsFileName)
 ukfIK.set_sensor_to_opensim_rotations(osim.Vec3(0, 0, 0))
@@ -85,19 +87,18 @@ ukfIK.set_output_motion_file(outputFile)
 ukfIK.set_alpha(1.0)
 ukfIK.set_beta(2.0)
 ukfIK.set_kappa(-1.337) # sets kappa to 3-n
-ukfIK.set_order(2) # 2nd-order time derivatives 
-ukfIK.set_lag_length(5) # number of samples in backwards smoothing
-ukfIK.set_num_threads(7) # number of threads to use in thread pool
+ukfIK.set_order(2) # 					2nd-order time derivatives 
+ukfIK.set_lag_length(5) 				# number of samples in backwards smoothing
+ukfIK.set_num_threads(7) 				# number of threads to use in thread pool
 ukfIK.set_processForgetFactor(0.1) 
-ukfIK.set_observationForgetFactor(0.0) #setting this to zero disables observation noise update
+ukfIK.set_observationForgetFactor(0.0)	# setting this to zero disables observation noise update
 ukfIK.set_write_UKF(True)
 ukfIK.set_sgma2w_0(2.0**(10))
 ukfIK.set_sgma2w_min(2.0**(10))
 ukfIK.set_sgma2w_max(10.0**(7))
 ukfIK.set_missing_data_scale(1.0)
 ukfIK.set_imu_RMS_in_deg(osim.Vec3(0.5, 1.0, 0.5))
-ukfIK.set_enable_resampling(True)
-ukfIK.set_enable_clamping(True)
+ukfIK.set_enable_clamping(True)			# enforce inequality constraints
 ukfIK.set_enforce_independent_sensors(True)
 ukfIK.set_enforce_white_process_noise(True)
 ukfIK.set_process_noise_zero(True)

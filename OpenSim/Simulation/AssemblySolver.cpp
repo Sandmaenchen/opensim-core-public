@@ -294,7 +294,7 @@ void AssemblySolver::setState(SimTK::State &s)
 	// and their type (constrained vs. weighted)
 
 	if(_assembler && _assembler->isInitialized()){
-		updateGoals(s);
+		//updateGoals(s);
 	}
     else{
 		throw Exception("AssemblySolver::setState() failed: assemble() must be called first.");
@@ -302,7 +302,18 @@ void AssemblySolver::setState(SimTK::State &s)
 
 	try{
 		// update the state from the result of the assembler
-		_assembler->initialize(s);
+        
+        //const SimbodyMatterSubsystemRep& asd = SimTK_DYNAMIC_CAST_DEBUG<const SimbodyMatterSubsystemRep&>(_assembler->getMatterSubsystem().getRep());
+        if (!_assembler->getMatterSubsystem().getUseEulerAngles(s)) {
+            _assembler->getMatterSubsystem().setUseEulerAngles(s, true);
+        }        
+		//_assembler->initialize(s);
+        //SimTK::State internalState;
+        //_assembler->getMatterSubsystem().convertToEulerAngles(s, internalState);
+        _assembler->setInternalState(s);
+        //_assembler->getMultibodySystem().realizeModel(internalState);
+        _assembler->initialize();
+        _assembler->getMultibodySystem().realize(s, SimTK::Stage::Velocity);
 	}
 	catch (const std::exception& ex)
     {
