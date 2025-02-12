@@ -36,8 +36,8 @@
 Instructions partially follow [this reference](https://opensimconfluence.atlassian.net/wiki/spaces/OpenSim/pages/53085346/Scripting+in+Python) [Accessed: 2024-05-13].
 
 1. In terminal, run the command `sudo apt update`, followed by {`sudo apt upgrade`}.
-2. Install Eigen 3.4.0 with the command `sudo apt install libeigen3-dev`.
-3. Copy the Eigen directory with the command `sudo cp -r /usr/include/eigen3/Eigen/ /usr/local/include/Eigen`.
+2. (Optional) Install Eigen 3.4.0 with the command `sudo apt install libeigen3-dev`.
+3. (Optional) Copy the Eigen directory with the command `sudo cp -r /usr/include/eigen3/Eigen/ /usr/local/include/Eigen`.
 4. Download the script `opensim-core-ukf-linux-build-script.sh` from https://github.com/Sandmaenchen/opensim-core-public/tree/ukf-uks-tools/scripts/build. Ensure that *CORE_BRANCH* flag is set to *ukf-uks-tools*. 
 5. Make the script runnable with `chmod +x opensim-core-ukf-linux-build-script.sh`
 6. Run the script with the command `./opensim-core-ukf-linux-build-script.sh`. 
