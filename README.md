@@ -28,7 +28,7 @@
 
 ---
 
-**NOTE: This branch contains the source code for my customized version of OpenSim 4.5.**
+**NOTE: This branch contains the source code for my customized version of OpenSim 4.5, which includes the Adaptive Unscented Kalman Smoothing Musculoskeletal Inverse Kinematics Tool (AUKSMIKT)**
 
 
 ## Building and installing on Ubuntu
@@ -72,7 +72,7 @@ Open File Explorer and navigate to `\\wsl\$`. The mounting point of VM (Ubuntu-2
 
 ## An example template for Python script
 
-The following is a template for Python script that creates an object from our UKF-based tool class and runs it.
+The following is a template for Python script that creates an object from our UKF-based inverse kinematics tool class and runs it.
 
 ~~~~
 import opensim as osim
@@ -125,6 +125,8 @@ If you use plugins, models, or other components contributed by your fellow resea
 
 
 ## Funding
+
+The 
 
 The OpenSim project is currently supported by the following:
  - United States National Institutes of Health (NIH)
