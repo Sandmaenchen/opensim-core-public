@@ -87,7 +87,7 @@ ukfIK.set_output_motion_file(outputFile)
 ukfIK.set_alpha(1.0)
 ukfIK.set_beta(2.0)
 ukfIK.set_kappa(-1.337) # sets kappa to 3-n
-ukfIK.set_order(2) # 					2nd-order time derivatives 
+ukfIK.set_order(2)                      # 2nd-order time derivatives 
 ukfIK.set_lag_length(5) 				# number of samples in backwards smoothing
 ukfIK.set_num_threads(7) 				# number of threads to use in thread pool
 ukfIK.set_processForgetFactor(0.1) 
