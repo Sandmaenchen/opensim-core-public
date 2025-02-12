@@ -126,7 +126,10 @@ If you use plugins, models, or other components contributed by your fellow resea
 
 ## Funding
 
-The 
+The development of AUKSMIKT was supported by: 
+- the Research Council of Finland under funding decision number 349469
+- the Finnish Ministry of Education and Culture’s Pilot for Doctoral Programmes (Pilot project Mathematics of Sensing, Imaging and Modelling)
+- the State Research Funding for university-level health research, Kuopio University Hospital, Wellbeing services county of North Savo under project number 5041814
 
 The OpenSim project is currently supported by the following:
  - United States National Institutes of Health (NIH)
