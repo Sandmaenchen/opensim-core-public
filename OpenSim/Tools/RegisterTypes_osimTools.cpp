@@ -107,7 +107,7 @@ OSIMTOOLS_API void RegisterTypes_osimTools()
     Object::registerType( IMUInverseKinematicsTool());
     Object::registerType( UKFIMUInverseKinematicsTool());
     Object::registerType( IMUForwardKinematicsTool());
-    Object::registerType( CoordinateDerivativeTool());
+    //Object::registerType( CoordinateDerivativeTool());
     Object::registerType( InverseDynamicsTool() );
     // Old versions
     Object::RenameType("rdCMC_Joint",   "CMC_Joint");
