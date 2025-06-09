@@ -9,11 +9,11 @@
 // UKFThreadPool methods
 
 
-OpenSim::UKFThreadPool::UKFThreadPool(size_t num_threads) : numTasksPending(0), stop(false) {
-    for (size_t i = 0; i < num_threads; ++i) {
-        workers.emplace_back(std::bind(&UKFThreadPool::workerThread, this));
-    }
-}
+// OpenSim::UKFThreadPool::UKFThreadPool(size_t num_threads) : numTasksPending(0), stop(false) {
+//     for (size_t i = 0; i < num_threads; ++i) {
+//         workers.emplace_back(std::bind(&UKFThreadPool::workerThread, this));
+//     }
+// }
 
 /*
 template<class F>
@@ -27,56 +27,50 @@ void OpenSim::UKFThreadPool::enqueue(F f) {
 }
 */
 
-void OpenSim::UKFThreadPool::waitUntilCompleted() {
-    std::unique_lock<std::mutex> lock(main_mutex);
-    if (numTasksPending != 0) {
-        main_condition.wait(lock);
-    }
-    else {
-        lock.unlock();
-    }
-}
+// void OpenSim::UKFThreadPool::waitUntilCompleted() {
+//     std::unique_lock<std::mutex> lock(main_mutex);
+//     if (numTasksPending != 0) {
+//         main_condition.wait(lock);
+//     }
+//     else {
+//         lock.unlock();
+//     }
+// }
 
-OpenSim::UKFThreadPool::~UKFThreadPool() {
-    {
-        std::unique_lock<std::mutex> lock(queue_mutex);
-        stop = true;
-    }
-    condition.notify_all();
-    for (std::thread& worker : workers) {
-        worker.join();
-    }
-}
+// OpenSim::UKFThreadPool::~UKFThreadPool() {
+//     {
+//         std::unique_lock<std::mutex> lock(queue_mutex);
+//         stop = true;
+//     }
+//     condition.notify_all();
+//     for (std::thread& worker : workers) {
+//         worker.join();
+//     }
+// }
 
-void OpenSim::UKFThreadPool::workerThread() {
-    while (true) {
-        std::function<void()> task;
-        {
-            std::unique_lock<std::mutex> queueLock(queue_mutex);
-            condition.wait(queueLock, [this] { return stop || !tasks.empty(); });
-            if (stop && tasks.empty()) {
-                return;
-            }
-            task = tasks.front();
-            tasks.pop();
-        }
-        task();
-        {
-            std::lock_guard<std::mutex> mainLock(main_mutex);
-            numTasksPending--;
-            if (numTasksPending == 0) {
-                main_condition.notify_one();
-            }
-        }
-    }
-}
+// void OpenSim::UKFThreadPool::workerThread() {
+//     while (true) {
+//         std::function<void()> task;
+//         {
+//             std::unique_lock<std::mutex> queueLock(queue_mutex);
+//             condition.wait(queueLock, [this] { return stop || !tasks.empty(); });
+//             if (stop && tasks.empty()) {
+//                 return;
+//             }
+//             task = tasks.front();
+//             tasks.pop();
+//         }
+//         task();
+//         {
+//             std::lock_guard<std::mutex> mainLock(main_mutex);
+//             numTasksPending--;
+//             if (numTasksPending == 0) {
+//                 main_condition.notify_one();
+//             }
+//         }
+//     }
+// }
 
-// Struct for holding the clamped coordinate limits
-OpenSim::UKFClampedCoordLimits::UKFClampedCoordLimits(std::string name, double min, double max) {
-    stateVarName = name;
-    rangeMin = min;
-    rangeMax = max;
-}
 
 // UKFIMUInverseKinematicsTool methods
 OpenSim::UKFIMUInverseKinematicsTool::UKFIMUInverseKinematicsTool()
@@ -402,6 +396,25 @@ void OpenSim::UKFIMUInverseKinematicsTool::runInverseKinematicsWithOrientationsF
     delete stateMeansBuffer;
     log_info("Deleted dynamically allocated stuff");
 
+    /*
+    for (auto time : times) {
+        s0.updTime() = time;
+        ikSolver.track(s0);
+        if (get_report_errors()) {
+            ikSolver.computeCurrentOrientationErrors(orientationErrors);
+            modelOrientationErrors->appendRow(
+                    s0.getTime(), orientationErrors);
+        }
+        if (visualizeResults)  
+            model.getVisualizer().show(s0);
+        else
+            log_info("Solved at time: {} s", time);
+        // realize to report to get reporter to pull values from model
+        analysisSet.step(s0, step++);
+        model.realizeReport(s0);
+    }
+    */
+
     auto report = ikReporter->getTable();
     // form resultsDir either from results_directory or output_motion_file
     auto resultsDir = get_results_directory();
@@ -456,6 +469,8 @@ bool OpenSim::UKFIMUInverseKinematicsTool::run(bool visualizeResults, SimTK::Vec
     }
     if (get_calibrate() == true) {
         OpenSim::IMUPlacer imuPlacer = OpenSim::IMUPlacer();
+        _model->updForceSet().clearAndDestroy();
+        _model->updControllerSet().clearAndDestroy();
         imuPlacer.setModel(*_model);
         imuPlacer.set_base_imu_label(get_base_imu_label());
         imuPlacer.set_base_heading_axis(get_base_heading_axis());
@@ -474,6 +489,17 @@ bool OpenSim::UKFIMUInverseKinematicsTool::run(bool visualizeResults, SimTK::Vec
         log_info("managed to assign calibrated model.");
         _model->finalizeFromProperties();
         log_info("model: finalized from properties.");
+    }
+    else {
+        _model->updForceSet().clearAndDestroy();
+        _model->updControllerSet().clearAndDestroy();
+        try {
+            _model->finalizeFromProperties();
+        }
+        catch(OpenSim::Exception &ex) {
+            log_error("Could not finalize model from properties.");
+            throw(ex);
+        }        
     }
 
     OpenSim::UKFIMUInverseKinematicsTool::runInverseKinematicsWithOrientationsFromFile(*_model,
@@ -751,6 +777,8 @@ void OpenSim::UKFIMUInverseKinematicsTool::UKFTool(int nqf, int nuf, Eigen::Matr
             //OpenSim::Model* model_clone = new OpenSim::Model(get_model_file());
             OpenSim::Model* model_clone = new OpenSim::Model(ikSolver.getModel());
             models.push_back(model_clone);  //Alternatively, emplace_back(), but that *should* be slower
+            models[ii]->updForceSet().clearAndDestroy();
+            models[ii]->updControllerSet().clearAndDestroy();
             models[ii]->initSystem();
             OpenSim::InverseKinematicsSolver* aSolver = new OpenSim::InverseKinematicsSolver(*(models[ii]), nullptr,
                     std::make_shared<OpenSim::OrientationsReference>(oRefs),
@@ -864,7 +892,29 @@ void OpenSim::UKFIMUInverseKinematicsTool::UKFTool(int nqf, int nuf, Eigen::Matr
             if (get_enable_clamping()) {                
                 OpenSim::UKFIMUInverseKinematicsTool::clampCoordinates(x, clampedCoordLimits, yMapFromOpenSimToSimbody, yMapFromSimbodyToEigen, order, nuf);            
             }
-            
+            /*
+            for (const auto& coord : models[0]->getComponentList<OpenSim::Coordinate>()) {
+                if (coord.get_clamped()) {
+                    if (x(yMapFromOpenSimToSimbody[coord.getStateVariableNames()[0]]) > coord.getRangeMax()) {
+                        x(yMapFromOpenSimToSimbody[coord.getStateVariableNames()[0]]) = coord.getRangeMax();
+                        for (int ordidx = 1; ordidx <= order; ordidx++) {
+                            if (x((ordidx * nuf) + yMapFromOpenSimToSimbody[coord.getStateVariableNames()[0]]) > 0) {
+                                x((ordidx * nuf) + yMapFromOpenSimToSimbody[coord.getStateVariableNames()[0]]) = 0;
+                            }
+                        }
+                    }
+                    else if (x(yMapFromOpenSimToSimbody[coord.getStateVariableNames()[0]]) < coord.getRangeMin()) {
+                        x(yMapFromOpenSimToSimbody[coord.getStateVariableNames()[0]]) = coord.getRangeMin();
+                        for (int ordidx = 1; ordidx <= order; ordidx++) {
+                            if (x((ordidx * nuf) + yMapFromOpenSimToSimbody[coord.getStateVariableNames()[0]]) < 0) {
+                                x((ordidx * nuf) + yMapFromOpenSimToSimbody[coord.getStateVariableNames()[0]]) = 0;
+                            }
+                        }
+                    }
+                }
+            }
+            */
+
             priorStatsVector.emplace_back(x);   // this won't be used in backward pass
             priorStatsVector.emplace_back(P);   // this won't be used in backward pass
             priorStatsVector.emplace_back(P);   // this won't be used in backward pass
@@ -962,11 +1012,16 @@ void OpenSim::UKFIMUInverseKinematicsTool::UKFTool(int nqf, int nuf, Eigen::Matr
             */
 
             // Steps 0-4 for linear model with Gaussian noise            
-            C = P * F.transpose();            
+            C = P * F.transpose();
+            //P0 = ((F) * P * (F.transpose())) - (2 * (w) * (x.transpose() * F.transpose()));
             P0 = (F * P * (F.transpose()));
-            P = (F * P * (F.transpose())) + Q;            
+            P = (F * P * (F.transpose())) + Q;
+            //This P *should* contain subtraction of the noise term... pls double check
+            //P = ((F) * P * (F.transpose())) + (Q) - (2 * (w) * (x.transpose() * F.transpose()));      
+            //x = (F) * x;
             x0 = F * x;          //a priori mean assuming zero noise
-            x = F * x + w;    //a priori mean assuming non-zero noise            
+            x = F * x + w;    //a priori mean assuming non-zero noise
+            //x = x0;
             //log_info("completed steps 0-4");
 
             // Apply inequality constraints (clamped coordinates)
@@ -1160,7 +1215,8 @@ void OpenSim::UKFIMUInverseKinematicsTool::UKFTool(int nqf, int nuf, Eigen::Matr
                 }
                 else {
                     dataMinusMeanQuat = (vQuat[iy] *
-                            expectedOVector[iy]) * dataOVector[iy].conjugate();
+                            expectedOVector[iy]) * dataOVector[iy].conjugate(); // THIS ONE WAS USED PREVIOUSLY (prior to 2025-05-06)
+                    // dataMinusMeanQuat = (expectedOVector[iy] * vQuat[iy]) * dataOVector[iy].conjugate();
                     dataMinusMeanQuat0 = expectedOVector[iy] * dataOVector[iy].conjugate();
                     // dataMinusMeanQuat = dataOVector[iy].conjugate() *
                     // expectedOVector[iy];
@@ -1185,7 +1241,18 @@ void OpenSim::UKFIMUInverseKinematicsTool::UKFTool(int nqf, int nuf, Eigen::Matr
             //log_info("completed step 8");
 
             // Step 9. Calculate covariance of expected orientations
-            
+            // we need the expected orientations assuming zero-mean noise
+            for (int iy = 0; iy < ny; iy++) {
+                SimTK::Quaternion_<double> tempQuat = SimTK::Quaternion_<double>(expectedOVector[iy].w(), 
+                expectedOVector[iy].x(), expectedOVector[iy].y(), expectedOVector[iy].z());
+                SimTK::Vec3 tempVec3 = SimTK::Rotation_<double>(tempQuat).convertThreeAxesRotationToThreeAngles(
+                    SimTK::BodyOrSpaceType::SpaceRotationSequence, SimTK::XAxis, SimTK::YAxis, SimTK::ZAxis);
+                ypred(3 * iy + 0, 0) = tempVec3(0);
+                ypred(3 * iy + 1, 0) = tempVec3(1);
+                ypred(3 * iy + 2, 0) = tempVec3(2);
+            }
+            //Py *should* contain subtraction of the noise term..
+            //Py = (R) - (2 * (v) * ypred.transpose()) + W0c * (Sigmas2props.col(0) * Sigmas2props.col(0).transpose());
             Py = R + W0c * (Sigmas2props.col(0) * Sigmas2props.col(0).transpose());
             for (int ii = 1; ii < (2 * (nqf + (order*nuf)) + 1); ii++) {
                 Py += Wi * (Sigmas2props.col(ii) * Sigmas2props.col(ii).transpose());
@@ -1557,66 +1624,85 @@ void OpenSim::UKFIMUInverseKinematicsTool::computeBackwardPass(OpenSim::Model& m
     }
     UKFresultsDir.append("/ukf/");
     OpenSim::IO::makeDir(UKFresultsDir);
-    auto UKFResultsDirQ = UKFresultsDir;
-    auto UKFResultsDirPq = UKFresultsDir;
-    auto UKFResultsDirU = UKFresultsDir;
-    auto UKFResultsDirPu = UKFresultsDir;
-    auto UKFResultsDirUdot = UKFresultsDir;
-    auto UKFResultsDirPudot = UKFresultsDir;
-    UKFResultsDirQ.append("q.txt");
-    UKFResultsDirPq.append("Pq.txt");
-    std::ofstream fileQ(UKFResultsDirQ, std::ios_base::trunc);
-    std::ofstream filePq(UKFResultsDirPq, std::ios_base::trunc);
-    fileQ << "endheader" << std::endl << "time\t";
-    filePq << "endheader" << std::endl << "time\t";
-    UKFResultsDirU.append("u.txt");
-    UKFResultsDirPu.append("Pu.txt");
-    std::ofstream fileU(UKFResultsDirU, std::ios_base::trunc);
-    std::ofstream filePu(UKFResultsDirPu, std::ios_base::trunc);
-    fileU << "endheader" << std::endl << "time\t";
-    filePu << "endheader" << std::endl << "time\t";
-    UKFResultsDirUdot.append("udot.txt");
-    UKFResultsDirPudot.append("Pudot.txt");
-    std::ofstream fileUdot(UKFResultsDirUdot, std::ios_base::trunc);
-    std::ofstream filePudot(UKFResultsDirPudot, std::ios_base::trunc);
-    fileUdot << "endheader" << std::endl << "time\t";
-    filePudot << "endheader" << std::endl << "time\t";
+    // auto UKFResultsDirQ = UKFresultsDir;
+    // auto UKFResultsDirPq = UKFresultsDir;
+    // auto UKFResultsDirU = UKFresultsDir;
+    // auto UKFResultsDirPu = UKFresultsDir;
+    // auto UKFResultsDirUdot = UKFresultsDir;
+    // auto UKFResultsDirPudot = UKFresultsDir;
+    auto UKFResultsDirX = UKFresultsDir;
+    auto UKFResultsDirPx = UKFresultsDir;
+    // UKFResultsDirQ.append("q.txt");
+    // UKFResultsDirPq.append("Pq.txt");
+    // std::ofstream fileQ(UKFResultsDirQ, std::ios_base::trunc);
+    // std::ofstream filePq(UKFResultsDirPq, std::ios_base::trunc);
+    // fileQ << "endheader" << std::endl << "time\t";
+    // filePq << "endheader" << std::endl << "time\t";
+    // UKFResultsDirU.append("u.txt");
+    // UKFResultsDirPu.append("Pu.txt");
+    // std::ofstream fileU(UKFResultsDirU, std::ios_base::trunc);
+    // std::ofstream filePu(UKFResultsDirPu, std::ios_base::trunc);
+    // fileU << "endheader" << std::endl << "time\t";
+    // filePu << "endheader" << std::endl << "time\t";
+    // UKFResultsDirUdot.append("udot.txt");
+    // UKFResultsDirPudot.append("Pudot.txt");
+    // std::ofstream fileUdot(UKFResultsDirUdot, std::ios_base::trunc);
+    // std::ofstream filePudot(UKFResultsDirPudot, std::ios_base::trunc);
+    // fileUdot << "endheader" << std::endl << "time\t";
+    // filePudot << "endheader" << std::endl << "time\t";
+    UKFResultsDirX.append("x.txt");
+    UKFResultsDirPx.append("Px.txt");
+    std::ofstream fileX(UKFResultsDirX, std::ios_base::trunc);
+    std::ofstream filePx(UKFResultsDirPx, std::ios_base::trunc);
+    fileX << "endheader" << std::endl << "time\t";
+    filePx << "endheader" << std::endl << "time\t";
 
     //OpenSim::Array<std::string> modelStateVariableNames = model.getStateVariableNames();
 
     std::regex rgx(".*/(\\w+)/value");
     std::smatch match;
-    for (std::map<int, int>::iterator it = yMapFromEigenToSimbody.begin(); it != yMapFromEigenToSimbody.end(); ++it) {
-        std::string s = yMapFromSimbodyToOpenSim.at(it->second);
-        if (std::regex_search(s,match,rgx)) {
-            fileQ << match[1] << "\t";
-            fileU << match[1] << "\t";
-            fileUdot << match[1] << "\t";
+    for (int iord = 0; iord <= order; iord++) {
+        for (std::map<int, int>::iterator it = yMapFromEigenToSimbody.begin(); it != yMapFromEigenToSimbody.end(); ++it) {
+            std::string s = yMapFromSimbodyToOpenSim.at(it->second);
+            if (std::regex_search(s,match,rgx)) {
+                // fileQ << match[1] << "\t";
+                // fileU << match[1] << "\t";
+                // fileUdot << match[1] << "\t";
+                fileX << match[1] << "_" << std::to_string(iord) << "\t";
+            }
+        }
+    }
+    
+    // for (int irow = 0; irow < (nqf); irow++) {
+    //     for (int icol = irow; icol < (nqf); icol++) {
+    //         filePq << "[" << irow << ", " << icol << "]" << "\t";
+    //     }
+    // }
+    // for (int irow = 0; irow < (nuf); irow++) {
+    //     for (int icol = irow; icol < (nuf); icol++) {
+    //         filePu << "[" << irow << ", " << icol << "]" << "\t";
+    //     }
+    // }
+    // for (int irow = 0; irow < (nuf); irow++) {
+    //     for (int icol = irow; icol < (nuf); icol++) {
+    //         filePudot << "[" << irow << ", " << icol << "]" << "\t";
+    //     }
+    // }
+
+    for (int irow = 0; irow < ((order+1) * nqf); irow++) {
+        for (int icol = irow; icol < ((order+1) * nqf); icol++) {
+            filePx << "[" << irow << ", " << icol << "]" << "\t";
         }
     }
 
-    for (int irow = 0; irow < (nqf); irow++) {
-        for (int icol = irow; icol < (nqf); icol++) {
-            filePq << "[" << irow << ", " << icol << "]" << "\t";
-        }
-    }
-    for (int irow = 0; irow < (nuf); irow++) {
-        for (int icol = irow; icol < (nuf); icol++) {
-            filePu << "[" << irow << ", " << icol << "]" << "\t";
-        }
-    }
-    for (int irow = 0; irow < (nuf); irow++) {
-        for (int icol = irow; icol < (nuf); icol++) {
-            filePudot << "[" << irow << ", " << icol << "]" << "\t";
-        }
-    }
-
-    fileQ << std::endl;
-    filePq << std::endl;
-    fileU << std::endl;
-    filePu << std::endl;
-    fileUdot << std::endl;
-    filePudot << std::endl;
+    // fileQ << std::endl;
+    // filePq << std::endl;
+    // fileU << std::endl;
+    // filePu << std::endl;
+    // fileUdot << std::endl;
+    // filePudot << std::endl;
+    fileX << std::endl;
+    filePx << std::endl;
 
     while (true) {
         //log_info("bwd: start of loop");
@@ -1718,12 +1804,14 @@ void OpenSim::UKFIMUInverseKinematicsTool::computeBackwardPass(OpenSim::Model& m
                     writeToFile = true;
                 }
                 else if ((int)currentPriorMeans.size() == 0) {
-                    fileQ.close();
-                    filePq.close();
-                    fileU.close();
-                    filePu.close();
-                    fileUdot.close();
-                    filePudot.close();
+                    // fileQ.close();
+                    // filePq.close();
+                    // fileU.close();
+                    // filePu.close();
+                    // fileUdot.close();
+                    // filePudot.close();
+                    fileX.close();
+                    filePx.close();
                     writeToFile = false;
                     break;
                 }
@@ -1761,88 +1849,259 @@ void OpenSim::UKFIMUInverseKinematicsTool::computeBackwardPass(OpenSim::Model& m
             
         // Write the state to result files
         if (get_write_UKF() && writeToFile) {
-            if (order > 1) {
-                filePq << static_cast<float>(time) << "\t";
-                for (int irow = 0; irow < (nqf); irow++) {
-                    for (int icol = irow; icol < (nqf); icol++) {
-                        filePq << static_cast<float>(smoothPosteriorCov(irow, icol)) << "\t";
-                    }
+            // filePq << static_cast<float>(time) << "\t";
+            // for (int irow = 0; irow < (nqf); irow++) {
+            //     for (int icol = irow; icol < (nqf); icol++) {
+            //         filePq << static_cast<float>(smoothPosteriorCov(irow, icol)) << "\t";
+            //     }
+            // }
+            // fileQ << static_cast<float>(time) << "\t";
+            // for (int irow = 0; irow < (nqf); irow++) {
+            //     fileQ << static_cast<float>(smoothPosteriorMean(irow)) << "\t";
+            // }
+            // filePu << static_cast<float>(time) << "\t";
+            // for (int irow = nqf; irow < (nqf+nuf); irow++) {
+            //     for (int icol = irow; icol < (nqf+nuf); icol++) {
+            //         filePu << static_cast<float>(smoothPosteriorCov(irow, icol)) << "\t";
+            //     }
+            // }
+            // fileU << static_cast<float>(time) << "\t";
+            // for (int irow = nqf; irow < (nqf+nuf); irow++) {
+            //     fileU << static_cast<float>(smoothPosteriorMean(irow)) << "\t";
+            // }
+            // filePudot << static_cast<float>(time) << "\t";
+            // for (int irow = (nqf+nuf); irow < (nqf+2*nuf); irow++) {
+            //     for (int icol = irow; icol < (nqf+2*nuf); icol++) {
+            //         filePudot << static_cast<float>(smoothPosteriorCov(irow, icol)) << "\t";
+            //     }
+            // }
+            // fileUdot << static_cast<float>(time) << "\t";
+            // for (int irow = (nqf+nuf); irow < (nqf+2*nuf); irow++) {
+            //     fileUdot << static_cast<float>(smoothPosteriorMean(irow)) << "\t";
+            // }
+            // fileQ << std::endl;
+            // filePq << std::endl;
+            // fileU << std::endl;
+            // filePu << std::endl;
+            // fileUdot << std::endl;
+            // filePudot << std::endl;
+            filePx << static_cast<float>(time) << "\t";
+            for (int irow = 0; irow < ((order+1) * nqf); irow++) {
+                for (int icol = irow; icol < ((order+1) * nqf); icol++) {
+                    filePx << static_cast<float>(smoothPosteriorCov(irow, icol)) << "\t";
                 }
-                fileQ << static_cast<float>(time) << "\t";
-                for (int irow = 0; irow < (nqf); irow++) {
-                    fileQ << static_cast<float>(smoothPosteriorMean(irow)) << "\t";
-                }
-                filePu << static_cast<float>(time) << "\t";
-                for (int irow = nqf; irow < (nqf+nuf); irow++) {
-                    for (int icol = irow; icol < (nqf+nuf); icol++) {
-                        filePu << static_cast<float>(smoothPosteriorCov(irow, icol)) << "\t";
-                    }
-                }
-                fileU << static_cast<float>(time) << "\t";
-                for (int irow = nqf; irow < (nqf+nuf); irow++) {
-                    fileU << static_cast<float>(smoothPosteriorMean(irow)) << "\t";
-                }
-                filePudot << static_cast<float>(time) << "\t";
-                for (int irow = (nqf+nuf); irow < (nqf+2*nuf); irow++) {
-                    for (int icol = irow; icol < (nqf+2*nuf); icol++) {
-                        filePudot << static_cast<float>(smoothPosteriorCov(irow, icol)) << "\t";
-                    }
-                }
-                fileUdot << static_cast<float>(time) << "\t";
-                for (int irow = (nqf+nuf); irow < (nqf+2*nuf); irow++) {
-                    fileUdot << static_cast<float>(smoothPosteriorMean(irow)) << "\t";
-                }
-                fileQ << std::endl;
-                filePq << std::endl;
-                fileU << std::endl;
-                filePu << std::endl;
-                fileUdot << std::endl;
-                filePudot << std::endl;
             }
-            else if (order == 1) {
-                filePq << static_cast<float>(time) << "\t";
-                for (int irow = 0; irow < (nqf); irow++) {
-                    for (int icol = irow; icol < (nqf); icol++) {
-                        filePq << static_cast<float>(smoothPosteriorCov(irow, icol)) << "\t";
-                    }
-                }
-                fileQ << static_cast<float>(time) << "\t";
-                for (int irow = 0; irow < (nqf); irow++) {
-                    fileQ << static_cast<float>(smoothPosteriorMean(irow)) << "\t";
-                }
-                filePu << static_cast<float>(time) << "\t";
-                for (int irow = nqf; irow < (nqf+nuf); irow++) {
-                    for (int icol = irow; icol < (nqf+nuf); icol++) {
-                        filePu << static_cast<float>(smoothPosteriorCov(irow, icol)) << "\t";
-                    }
-                }
-                fileU << static_cast<float>(time) << "\t";
-                for (int irow = nqf; irow < (nqf+nuf); irow++) {
-                    fileU << static_cast<float>(smoothPosteriorMean(irow)) << "\t";
-                }
-                fileQ << std::endl;
-                filePq << std::endl;
-                fileU << std::endl;
-                filePu << std::endl;
+            fileX << static_cast<float>(time) << "\t";
+            for (int irow = 0; irow < ((order+1) * nqf); irow++) {
+                fileX << static_cast<float>(smoothPosteriorMean(irow)) << "\t";
             }
-            else {
-                filePq << static_cast<float>(time) << "\t";
-                for (int irow = 0; irow < (nqf); irow++) {
-                    for (int icol = irow; icol < (nqf); icol++) {
-                        filePq << static_cast<float>(smoothPosteriorCov(irow, icol)) << "\t";
-                    }
-                }
-                fileQ << static_cast<float>(time) << "\t";
-                for (int irow = 0; irow < (nqf); irow++) {
-                    fileQ << static_cast<float>(smoothPosteriorMean(irow)) << "\t";
-                }
-                fileQ << std::endl;
-                filePq << std::endl;
-            }
+            fileX << std::endl;
+            filePx << std::endl;
         }
     }   // end of while(true)
 }   //end of UKFIMUInverseKinematicsTool::computeBackwardPass
 
+// separate function for updating matrix Q. Obsolete!
+/*
+void OpenSim::UKFIMUInverseKinematicsTool::updateQMatrix(Eigen::MatrixXd* Q, Eigen::MatrixXd* F, std::queue<std::vector<Eigen::MatrixXd>>* stateMeansBuffer, 
+std::mutex* qMutex, std::condition_variable* condVar, bool* fwdDone, int nqf, int nuf, double deltaTime, SimTK::Vector_<double> processCovScales) {
+    std::vector<Eigen::MatrixXd> stateFrame;
+    std::deque<Eigen::MatrixXd> stateResiduals;
+    std::deque<Eigen::MatrixXd> stateCovs;
+    std::deque<Eigen::MatrixXd> crossCovs;
+    std::deque<Eigen::MatrixXd> ydiffs;
+    std::deque<Eigen::MatrixXd> weightDeque;
+    int order = get_order();
+    Eigen::MatrixXd weights((nqf + (order * nuf)), 1); weights.setZero();
+    Eigen::MatrixXd weightMeans((nqf + (order * nuf)), 1); weightMeans.setZero();
+    Eigen::MatrixXd weightSTDs((nqf + (order * nuf)), 1); weightSTDs.setZero();
+    Eigen::MatrixXd weightRegularizer((nqf + (order * nuf)), 1); weightRegularizer.setConstant((0.001 * SimTK::Pi / 180));
+    Eigen::MatrixXi weightMemories(nqf, 1); weightMemories.setZero(); 
+    weightMemories = weightMemories + Eigen::MatrixXi::Constant(nqf, 1, get_num_adaptive_weights());
+    double forgetFactor = 1.0;
+    Eigen::MatrixXd qMean((nqf + order*nuf), 1);
+    Eigen::MatrixXd Qs((nqf + order*nuf), (nqf + order*nuf)); 
+    Eigen::MatrixXd newQ((nqf + order*nuf), (nqf + order*nuf));
+    Eigen::MatrixXd PMean((nqf + order*nuf), (nqf + order*nuf));
+    Eigen::MatrixXd newP((nqf + order*nuf), (nqf + order*nuf));    
+    int N = get_num_adaptive_samples();
+    int M = 0;
+    double sigma0 = get_sgma2w_0(); // value used at time step 0
+    Eigen::MatrixXd sigmas(nqf, 1);
+    Eigen::MatrixXd newSigmas(nqf, 1);
+    Eigen::MatrixXd oldSigmas(nqf, 1);
+    Eigen::MatrixXd updQTerm((nqf + order*nuf), (nqf + order*nuf)); updQTerm.setZero();
+    sigmas.setConstant(sigma0);     
+    oldSigmas.setConstant(sigma0);  
+    newSigmas.setConstant(sigma0);   
+    bool weightsInitialized = false;
+
+    // Coefficients for process noise covariance matrix Q
+    Eigen::MatrixXd QCoeffs(order+1, order+1);
+    
+    if (get_process_covariance_method() == 0) {
+    // classic approach of Fioretti and Jetto, 1989 (no scaling tricks by default; should use ones)    
+        log_info("Using method of Fioretti and Jetto, 1989.");
+        for (int irow = 0; irow <= order; irow++) {
+            for (int icol = 0; icol <= order; icol++) {
+                double denum1 = OpenSim::UKFIMUInverseKinematicsTool::computeFactorial(order-irow);
+                double denum2 = OpenSim::UKFIMUInverseKinematicsTool::computeFactorial(order-icol);
+                int deltaPower = (order-irow) + (order-icol);
+                QCoeffs(irow, icol) = processCovScales(irow) * processCovScales(icol) * std::pow(deltaTime, (deltaPower+1)) / (denum1 * denum2 * (deltaPower+1));
+            }
+        }
+    }
+
+    else if (get_process_covariance_method() == 1) {
+    // approach using the Taylor remainders as white noise multipliers (plus additional scale factors)        
+        log_info("Using Taylor remainders.");
+        for (int irow = 0; irow <= order; irow++) {
+            for (int icol = 0; icol <= order; icol++) {
+                double denum1 = OpenSim::UKFIMUInverseKinematicsTool::computeFactorial(order+1-irow);
+                double denum2 = OpenSim::UKFIMUInverseKinematicsTool::computeFactorial(order+1-icol);
+                int deltaPower = (order+1-irow) + (order+1-icol);
+                QCoeffs(irow, icol) = processCovScales(irow) * processCovScales(icol) *
+                                    std::pow(deltaTime, (deltaPower)) / (denum1 * denum2);
+            }
+        }
+    }
+
+    Eigen::MatrixXd z((order+1),1);
+    Eigen::MatrixXd H((order+1),1);
+
+    for (int idx = 0; idx < (order+1); idx++) {
+        H(idx) = QCoeffs(idx, idx);        
+    }
+
+    //bool pastNsamples = false;
+
+    while (get_num_adaptive_samples() > 1) {
+        std::unique_lock<std::mutex> lock(*qMutex);
+        condVar->wait(lock, [&](){ return !(stateMeansBuffer->empty()) || (*fwdDone); });
+
+        if (!stateMeansBuffer->empty()) {
+            stateFrame = stateMeansBuffer->front();
+            stateMeansBuffer->pop();
+            lock.unlock();
+            stateResiduals.push_back((stateFrame[2] - stateFrame[1]));
+            stateCovs.push_back(stateFrame[0]);
+            crossCovs.push_back(stateFrame[3]);
+            ydiffs.push_back(stateFrame[4]);
+            //innovationValues.push_back(stateFrame[3]);            
+        }
+        
+        N = (int)stateResiduals.size();
+        Qs.setZero();        
+        M = std::min(N, get_num_adaptive_samples());
+        if (*fwdDone) {
+            break;
+        }             
+        else if (!weightsInitialized) {
+            if (N >= get_num_adaptive_weights()) {
+                weightMeans.setZero();
+                weightSTDs.setZero();
+                //PMean.setZero();        
+                for (int idx = 0; idx < N; idx++) {
+                    weights = (crossCovs.at(idx) * ydiffs.at(idx)).cwiseAbs();
+                    weightMeans += ((1/((double)N)) * weights);
+                }
+                for (int idx = 0; idx < N; idx++) {
+                    weights = (crossCovs.at(idx) * ydiffs.at(idx)).cwiseAbs();
+                    weightSTDs += ((1/((double)(N-1))) * (weights - weightMeans).cwiseProduct(weights - weightMeans));
+                }
+                weightSTDs = weightSTDs.cwiseSqrt();
+                weightsInitialized = true;
+            }
+        } 
+        else if (weightsInitialized) {
+            if (N >= get_num_adaptive_samples()) {
+                // update prior knowledge on the weight history
+                
+                weightMeans.setZero();
+                weightSTDs.setZero();
+                //PMean.setZero();        
+                for (int idx = 0; idx < M; idx++) {
+                    weights = (crossCovs.at(idx) * ydiffs.at(idx)).cwiseAbs();
+                    weightMeans += ((1/((double)M)) * weights);
+                }
+                for (int idx = 0; idx < M; idx++) {
+                    weights = (crossCovs.at(idx) * ydiffs.at(idx)).cwiseAbs();
+                    weightSTDs += ((1/((double)(M-1))) * (weights - weightMeans).cwiseProduct(weights - weightMeans));
+                }
+                weightSTDs = weightSTDs.cwiseSqrt();      
+                
+                weights = (crossCovs.at(N-1) * ydiffs.at(N-1)).cwiseAbs();
+                updQTerm = (F * stateCovs.at(N-1) * F->transpose());
+                for (int cidx = 0; cidx < (nqf); cidx++) {                
+                    for (int oidx = 0; oidx < (order+1); oidx++) {
+                        //z(oidx) = Qs((cidx + (oidx*nuf)), (cidx + (oidx*nuf))); 
+                        z(oidx) = std::pow(stateResiduals.at(N-1)(cidx + oidx*nuf, 0), 2.0); 
+                        //z(oidx) = std::abs(std::pow(stateResiduals.at(N-1)(cidx + oidx*nuf, 0), 2.0) - updQTerm(cidx + oidx*nuf, cidx + oidx*nuf)); 
+                    }
+                    sigmas(cidx, 0) = std::max(std::abs((H.transpose() * H).ldlt().solve(H.transpose() * z)(0,0)), get_sgma2w_min());
+                    // choose forgetFactor assuming the weights are normally distributed
+                    if (weights(cidx + order*nuf, 0) > (weightMeans(cidx + order*nuf, 0) + get_update_threshold() * weightSTDs(cidx + order*nuf, 0))) {
+                        //weightMemories(cidx, 0) = weightMemories(cidx, 0) + 1;
+                        //forgetFactor = (0.5 * (1 + std::erf((weights(cidx, 0) - (weightMeans(cidx, 0))) / (weightSTDs(cidx, 0) * std::sqrt(2.0)))));
+                        //forgetFactor = std::max((1.0 - (((weights(cidx + order*nuf, 0) - (weightMeans(cidx + order*nuf, 0))) / (weightSTDs(cidx + order*nuf, 0))) * weightMemories(cidx, 0) / M)), 0.0);
+                        //forgetFactor = std::max((1.0 - (((weights(cidx + order*nuf, 0) - (weightMeans(cidx + order*nuf, 0))) / (weightSTDs(cidx + order*nuf, 0))) / M)), 0.0);
+                        
+                        if (sigmas(cidx, 0) > oldSigmas(cidx, 0)) {
+                            forgetFactor = 1.0 - (std::log2((sigmas(cidx, 0) / oldSigmas(cidx, 0))) / (M)) + (std::log2((oldSigmas(cidx, 0) / sigma0)) / (M));
+                        }
+                        else {
+                            forgetFactor = 1.0 - (std::log2((oldSigmas(cidx, 0) / sigmas(cidx, 0))) / (M));
+                        }
+                        if (forgetFactor < 0.0) {
+                            forgetFactor = 0.0;
+                        }
+                        
+                        forgetFactor = 1.0 - (1.0 / (M));
+                        //forgetFactor = OpenSim::UKFIMUInverseKinematicsTool::probWithinInterval(((weightMeans(cidx, 0) - weights(cidx, 0)) / (weightSTDs(cidx, 0))),
+                        //((weights(cidx, 0) - weightMeans(cidx, 0)) / (weightSTDs(cidx, 0)))); //this worked but makes no sense
+                        //log_info("larger, weight = {}, weightMean = {}, weightSTD = {} forget factor = {}", weights(cidx, 0), weightMeans(cidx, 0), weightSTDs(cidx, 0), forgetFactor);                     
+                    }
+                    else {
+                        //weightMemories(cidx, 0) = 0;
+                        forgetFactor = 1.0;
+                        weightMemories(cidx, 0)++;
+                        double deviation = weights(cidx + order*nuf, 0) - weightMeans(cidx + order*nuf, 0);
+                        weightMeans(cidx + order*nuf, 0) += (deviation / weightMemories(cidx, 0));
+                        weightSTDs(cidx + order*nuf, 0) = ((weightMemories(cidx, 0) - 2) * weightSTDs(cidx + order*nuf, 0)) + 
+                        deviation * (weights(cidx + order*nuf, 0) - weightMeans(cidx + order*nuf, 0));
+                        weightSTDs(cidx + order*nuf, 0) /= (weightMemories(cidx, 0)-1);                        
+                    }             
+                    //newSigmas(cidx, 0) = std::max(((forgetFactor * oldSigmas(cidx, 0)) + ((1 - forgetFactor) * sigmas(cidx, 0))), 1.0);
+                    newSigmas(cidx, 0) = std::max(((forgetFactor * oldSigmas(cidx, 0)) + ((1 - forgetFactor) * sigmas(cidx, 0))), get_sgma2w_min());
+                }
+
+                Qs.setZero();
+                for (int cidx = 0; cidx < nqf; cidx++) {
+                    for (int colidx = 0; colidx < (order+1); colidx++) {
+                        for (int rowidx = 0; rowidx < (order+1); rowidx++) {
+                            Qs(((rowidx*nuf) + cidx), ((colidx*nuf) + cidx)) = QCoeffs(rowidx, colidx) * newSigmas(cidx, 0);
+                        } 
+                    }                    
+                }
+                oldSigmas = newSigmas;
+                log_info("new process noise variances, minCoeff = {}", (double)newSigmas.cwiseAbs().minCoeff());
+                log_info("new process noise variances, maxCoeff = {}", (double)newSigmas.cwiseAbs().maxCoeff());
+                log_info("new process noise variances, mean = {}", (double)newSigmas.cwiseAbs().mean());
+                {
+                    std::unique_lock<std::mutex> lock(*qMutex);
+                    (Q) = Qs;
+                }
+                if (N >= get_num_adaptive_samples()) {
+                    stateResiduals.pop_front();
+                    stateCovs.pop_front();
+                    crossCovs.pop_front();
+                    ydiffs.pop_front();
+                } 
+            }
+        }      
+    }   //end of while(true)
+}   //end of UKFIMUInverseKinematicsTool::updateQMatrix
+*/
 
 void OpenSim::UKFIMUInverseKinematicsTool::clampCoordinates(Eigen::MatrixXd& stateMeans, std::vector<OpenSim::UKFClampedCoordLimits> clampedCoordLimits, 
 std::map<std::string, int> yMapFromOpenSimToSimbody, std::map<int, int> yMapFromSimbodyToEigen, int order, int nuf) {

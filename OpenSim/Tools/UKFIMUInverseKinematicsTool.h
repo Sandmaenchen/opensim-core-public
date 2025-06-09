@@ -53,13 +53,15 @@
 #include "simbody/internal/SimbodyMatterSubsystem.h"
 #include "simbody/internal/AssemblyCondition_OrientationSensors.h"
 #include <OpenSim/Tools/IMUInverseKinematicsTool.h>
-//#include <Eigen/Eigen>
-//#include <Eigen/Eigenvalues>
-//#include <Eigen/Cholesky>
+#include <OpenSim/Tools/UKFClampedCoordLimits.h>
+#include "OpenSim/Common/UKFThreadPool.h"
+#include <Eigen/Eigen>
+#include <Eigen/Eigenvalues>
+#include <Eigen/Cholesky>
 //#define EIGEN_USE_MKL_ALL 
-#include "Eigen/Eigen"
-#include "Eigen/Eigenvalues"
-#include "Eigen/Cholesky"
+// #include "Eigen/Eigen"
+// #include "Eigen/Eigenvalues"
+// #include "Eigen/Cholesky"
 #include <thread>
 #include <mutex>
 #include <iostream>
@@ -95,60 +97,47 @@ namespace OpenSim {
         //=============================================================================
 //=============================================================================
 /**
- * A tool that performs an Inverse Kinematics analysis with a given model.
+ * A Study that performs an Inverse Kinematics analysis with a given model.
  * Inverse kinematics is the solution of internal coordinates that poses
  * the model such that the body rotations (as measured by IMUs) affixed to the 
  * model minimize the weighted least-squares error with observations of IMU 
  * orientations in their spatial coordinates. 
  *
- * This tool is a modified version of the IMUInverseKinematicsTool by Ajay Seth.
- * Instead of frame-wise Least Squares solution, this one uses unscented Kalman filter.
- *
- * @author Matti Kortelainen
+ * @author Ajay Seth
  */
 
 
-class UKFThreadPool {
-public:
-    UKFThreadPool(size_t num_threads);
+// class UKFThreadPool {
+// public:
+//     UKFThreadPool(size_t num_threads);
 
-    template<class F>
-    void enqueue(F f) {
-        {
-            std::unique_lock<std::mutex> lock(queue_mutex);
-            tasks.emplace(std::function<void()>(f));
-        }
-        numTasksPending++;
-        condition.notify_one();
-    }
+//     template<class F>
+//     void enqueue(F f) {
+//         {
+//             std::unique_lock<std::mutex> lock(queue_mutex);
+//             tasks.emplace(std::function<void()>(f));
+//         }
+//         numTasksPending++;
+//         condition.notify_one();
+//     }
     
-    void waitUntilCompleted();
+//     void waitUntilCompleted();
 
-    ~UKFThreadPool();
+//     ~UKFThreadPool();
 
-private:
-    std::vector<std::thread> workers;
-    std::queue<std::function<void()>> tasks;
-    std::mutex queue_mutex;
-    std::condition_variable condition;
-    std::atomic<int> numTasksPending;
-    std::mutex main_mutex;
-    std::condition_variable main_condition;
-    bool stop;
+// private:
+//     std::vector<std::thread> workers;
+//     std::queue<std::function<void()>> tasks;
+//     std::mutex queue_mutex;
+//     std::condition_variable condition;
+//     std::atomic<int> numTasksPending;
+//     std::mutex main_mutex;
+//     std::condition_variable main_condition;
+//     bool stop;
 
-    void workerThread();
+//     void workerThread();
 
-};  // END of class UKFThreadPool
-
-// Struct for holding the clamped coordinate limits
-struct UKFClampedCoordLimits {
-    public:
-        std::string stateVarName;
-        double rangeMin;
-        double rangeMax;
-
-        UKFClampedCoordLimits(std::string name, double min, double max);
-}; // END of struct
+// };  // END of class UKFThreadPool
 
 
 class OSIMTOOLS_API UKFIMUInverseKinematicsTool
@@ -279,7 +268,6 @@ public:
     std::condition_variable* condVar, bool* fwdDone, std::map<int, int> yMapFromEigenToSimbody, std::map<int, int> yMapFromSimbodyToEigen, std::map<std::string, int> yMapFromOpenSimToSimbody, AnalysisSet& analysisSet, 
     std::map<int, std::string> yMapFromSimbodyToOpenSim, int nqf, int nuf);
 
-    // Function for updating covariance Q in a separate thread (OBSOLETE)
     //void updateQMatrix(Eigen::MatrixXd* Q, Eigen::MatrixXd* F, std::queue<std::vector<Eigen::MatrixXd>>* stateMeans, 
     //std::mutex* qMutex, std::condition_variable* condVar, bool* fwdDone, int nqf, int nuf, double deltaTime, SimTK::Vector_<double> processCovScales = SimTK::Vector_<double>());
 
@@ -291,7 +279,7 @@ private:
     
 
 //=============================================================================
-};  // END of class UKFIMUInverseKinematicsTool
+};  // END of class IMUInverseKinematicsTool
 //=============================================================================
 } // namespace
 
