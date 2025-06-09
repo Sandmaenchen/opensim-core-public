@@ -28,7 +28,7 @@
 
 ---
 
-**NOTE: This branch contains the source code for my customized version of OpenSim 4.5.**
+**NOTE: This branch contains the source code for my customized version of OpenSim 4.5, which includes the Adaptive Unscented Kalman Smoothing Musculoskeletal Inverse Kinematics Tool (AUKSMIKT)**
 
 
 ## Building and installing on Ubuntu
@@ -36,8 +36,8 @@
 Instructions partially follow [this reference](https://opensimconfluence.atlassian.net/wiki/spaces/OpenSim/pages/53085346/Scripting+in+Python) [Accessed: 2024-05-13].
 
 1. In terminal, run the command `sudo apt update`, followed by {`sudo apt upgrade`}.
-2. Install Eigen 3.4.0 with the command `sudo apt install libeigen3-dev`.
-3. Copy the Eigen directory with the command `sudo cp -r /usr/include/eigen3/Eigen/ /usr/local/include/Eigen`.
+2. (Optional) Install Eigen 3.4.0 with the command `sudo apt install libeigen3-dev`.
+3. (Optional) Copy the Eigen directory with the command `sudo cp -r /usr/include/eigen3/Eigen/ /usr/local/include/Eigen`.
 4. Download the script `opensim-core-ukf-linux-build-script.sh` from https://github.com/Sandmaenchen/opensim-core-public/tree/ukf-uks-tools/scripts/build. Ensure that *CORE_BRANCH* flag is set to *ukf-uks-tools*. 
 5. Make the script runnable with `chmod +x opensim-core-ukf-linux-build-script.sh`
 6. Run the script with the command `./opensim-core-ukf-linux-build-script.sh`. 
@@ -72,7 +72,7 @@ Open File Explorer and navigate to `\\wsl\$`. The mounting point of VM (Ubuntu-2
 
 ## An example template for Python script
 
-The following is a template for Python script that creates an object from our UKF-based tool class and runs it.
+The following is a template for Python script that creates an object from our UKF-based inverse kinematics tool class and runs it.
 
 ~~~~
 import opensim as osim
@@ -87,7 +87,7 @@ ukfIK.set_output_motion_file(outputFile)
 ukfIK.set_alpha(1.0)
 ukfIK.set_beta(2.0)
 ukfIK.set_kappa(-1.337) # sets kappa to 3-n
-ukfIK.set_order(2) # 					2nd-order time derivatives 
+ukfIK.set_order(2)                      # 2nd-order time derivatives 
 ukfIK.set_lag_length(5) 				# number of samples in backwards smoothing
 ukfIK.set_num_threads(7) 				# number of threads to use in thread pool
 ukfIK.set_processForgetFactor(0.1) 
@@ -125,6 +125,11 @@ If you use plugins, models, or other components contributed by your fellow resea
 
 
 ## Funding
+
+The development of AUKSMIKT was supported by: 
+- the Research Council of Finland under funding decision number 349469
+- the Finnish Ministry of Education and Culture’s Pilot for Doctoral Programmes (Pilot project Mathematics of Sensing, Imaging and Modelling)
+- the State Research Funding for university-level health research, Kuopio University Hospital, Wellbeing services county of North Savo under project number 5041814
 
 The OpenSim project is currently supported by the following:
  - United States National Institutes of Health (NIH)
