@@ -35,6 +35,8 @@
 #include "InverseKinematicsTool.h"
 #include "IMUInverseKinematicsTool.h"
 #include "UKFIMUInverseKinematicsTool.h"
+#include "AugAUKSMIKT.h"
+#include "UKFClampedCoordLimits.h"
 #include "IMUForwardKinematicsTool.h"
 #include "CoordinateDerivativeTool.h"
 

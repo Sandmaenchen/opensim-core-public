@@ -37,6 +37,7 @@
 #include <OpenSim/Tools/InverseKinematicsTool.h>
 #include <OpenSim/Tools/IMUInverseKinematicsTool.h>
 #include <OpenSim/Tools/UKFIMUInverseKinematicsTool.h>
+#include <OpenSim/Tools/AugAUKSMIKT.h>
 #include <OpenSim/Tools/IMUForwardKinematicsTool.h>
 #include <OpenSim/Tools/CoordinateDerivativeTool.h>
 

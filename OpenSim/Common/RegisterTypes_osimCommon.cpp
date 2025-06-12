@@ -53,6 +53,7 @@
 #include "ModelDisplayHints.h"
 #include "ExperimentalSensor.h"
 #include "XsensDataReaderSettings.h"
+#include "UKFThreadPool.h"
 
 #include <string>
 #include <iostream>
