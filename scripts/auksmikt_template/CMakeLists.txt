@@ -10,9 +10,10 @@ set(CMAKE_CXX_STANDARD 17)
 set(CMAKE_CXX_STANDARD_REQUIRED ON)
 SET(CMAKE_CXX_FLAGS "${CMAKE_CXX_FLAGS} -O2 -march=native")
 
-# Find and hook up to OpenSim.
+# Find and hook up to OpenSim. Also hooking up to Eigen may be necessary.
 # ----------------------------
 find_package(OpenSim REQUIRED PATHS "/home/<username>/opensim-core/")
+find_package(Eigen3 REQUIRED PATHS "/home/<username>/opensim-workspace/opensim-core-dependencies-install/eigen/share/eigen3/")
 
 # Configure this project.
 # -----------------------
