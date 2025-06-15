@@ -70,6 +70,10 @@ We haven't been able to build OpenSim on Windows 11. If you wish to test our sof
 
 Open File Explorer and navigate to `\\wsl\$`. The mounting point of VM (Ubuntu-22.04) is the root directory (i.e., `/`) of the Linux system.
 
+## An example CMake project template for C++ interface 
+
+We provide a template for CMake project in scripts/auksmikt_template/
+
 ## An example template for Python script
 
 The following is a template for Python script that creates an object from our UKF-based inverse kinematics tool class and runs it.
