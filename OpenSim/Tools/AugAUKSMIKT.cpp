@@ -886,9 +886,10 @@ void OpenSim::AugAUKSMIKT::UKFTool(int nqf, int nuf, Eigen::MatrixXd& w, Eigen::
                 SSx = llt.matrixL();
             }
             else {
-                log_info("ABORT: state covariance matrix is NOT positive definite!");
-                log_info("Tried to Cholesky factorize the following matrix: \n{}", (nqf + (order*nuf) + (3 * ny) + lambda) * P);
-                break;
+                log_info("WARNING: state covariance matrix is NOT positive definite!");
+                SSx = llt.matrixL();
+                //log_info("Tried to Cholesky factorize the following matrix: \n{}", (nqf + (order*nuf) + (3 * ny) + lambda) * P);
+                //break;
             }
             Sigmas2.col(0) = x;                
             for (int ii = 1; ii < (nqf + (order*nuf) + 1); ii++) {
@@ -904,9 +905,10 @@ void OpenSim::AugAUKSMIKT::UKFTool(int nqf, int nuf, Eigen::MatrixXd& w, Eigen::
                 SSy = llt.matrixL();
             }
             else {
-                log_info("ABORT: observation noise covariance matrix is NOT positive definite!");
-                log_info("Tried to Cholesky factorize the following matrix: \n{}", (nqf + (order*nuf) + (3 * ny) + lambda) * R);
-                break;
+                log_info("WARNING: observation noise covariance matrix is NOT positive definite!");
+                SSy = llt.matrixL();
+                //log_info("Tried to Cholesky factorize the following matrix: \n{}", (nqf + (order*nuf) + (3 * ny) + lambda) * R);
+                //break;
             }
             for (int ii = (2 * (nqf + (order*nuf)) + 1); ii < (2 * (nqf + (order*nuf) + (3 * ny)) + 1); ii++) {
                 Sigmas2.col(ii) = x;
@@ -940,19 +942,26 @@ void OpenSim::AugAUKSMIKT::UKFTool(int nqf, int nuf, Eigen::MatrixXd& w, Eigen::
                         solvers[ithr]->setState(*(arr_ss[ithr])); //method added to AssemblySolver (like in Kalman Smoother)
                         solvers[ithr]->computeCurrentSensorOrientations(*(arr_osensorOrientations[ithr]));   
                         auto noise = arr_vQuat[ithr];                        
-                        if (ii >= (2 * (nqf + (order*nuf)) + 1)) {
+                        if (ii >= ((2 * (nqf + (order*nuf)) + 1 + (3*ny)))) {
+                            //log_info("trying to access SSy matrix column {}", (ii - ((2 * (nqf + (order*nuf)) + 1 + (3*ny)))));
+                            auto sigma = SSy.col(ii - ((2 * (nqf + (order*nuf)) + 1 + (3*ny)))); //euler angles
+                            for (int iy = 0; iy < ny; iy++) {
+                                auto asd = SimTK::Quaternion_<double>(SimTK::Rotation(SimTK::BodyOrSpaceType::SpaceRotationSequence, 
+                                (sigma)(iy*3+0), SimTK::XAxis, (sigma)(iy*3+1), SimTK::YAxis, (sigma)(iy*3+2), SimTK::ZAxis));
+                                asd = asd.normalize(); 
+                                auto sad = Eigen::Quaternion<double>(asd(0), asd(1), asd(2), asd(3));
+                                noise[iy] = sad * noise[iy].conjugate();    // subtract the column
+                            }
+                        }
+                        else if (ii >= ((2 * (nqf + (order*nuf)) + 1))) {
+                            //log_info("trying to access SSy matrix column {}", (ii - (2 * (nqf + (order*nuf)) + 1)));
                             auto sigma = SSy.col(ii - (2 * (nqf + (order*nuf)) + 1)); //euler angles
                             for (int iy = 0; iy < ny; iy++) {
                                 auto asd = SimTK::Quaternion_<double>(SimTK::Rotation(SimTK::BodyOrSpaceType::SpaceRotationSequence, 
                                 (sigma)(iy*3+0), SimTK::XAxis, (sigma)(iy*3+1), SimTK::YAxis, (sigma)(iy*3+2), SimTK::ZAxis));
                                 asd = asd.normalize(); 
                                 auto sad = Eigen::Quaternion<double>(asd(0), asd(1), asd(2), asd(3));
-                                if (ii < (2 * (nqf + (order*nuf)) + 1 + (3* ny))) {
-                                    noise[iy] = sad * noise[iy];    // add the column
-                                }
-                                else {
-                                    noise[iy] = sad * noise[iy].conjugate();    // subtract the column
-                                }
+                                noise[iy] = sad * noise[iy];    // add the column
                             }
                         }              
                         // Add the observation noise to the orientations
